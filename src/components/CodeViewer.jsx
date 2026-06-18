@@ -1,29 +1,26 @@
 import { useState, useCallback } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Copy, Check, FileCode } from "lucide-react";
+import { Copy, Check, FileCode, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function CodeViewer({ script }) {
   const [copied, setCopied] = useState(false);
+  const [cmdCopied, setCmdCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(script.code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Fallback for older browsers
-      const textarea = document.createElement("textarea");
-      textarea.value = script.code;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    await navigator.clipboard.writeText(script.code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }, [script.code]);
+
+  const handleCmdCopy = useCallback(async () => {
+    // Build a shell heredoc command to overwrite the file on the Pi
+    const cmd = `cat > ${script.path} << 'PILAB_EOF'\n${script.code}\nPILAB_EOF`;
+    await navigator.clipboard.writeText(cmd);
+    setCmdCopied(true);
+    setTimeout(() => setCmdCopied(false), 2000);
+  }, [script]);
 
   if (!script) {
     return (
@@ -41,35 +38,73 @@ export default function CodeViewer({ script }) {
   return (
     <div className="flex-1 flex flex-col bg-[#0d1117] overflow-hidden">
       {/* Top bar */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-[#21262d] bg-[#0d1117]">
-        <div>
-          <h1 className="text-[#e6edf3] font-mono text-sm font-semibold">
-            {script.filename}
-          </h1>
+      <div className="flex items-start justify-between px-6 py-3 border-b border-[#21262d] bg-[#0d1117] gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h1 className="text-[#e6edf3] font-mono text-sm font-semibold">
+              {script.filename}
+            </h1>
+            {script.path && (
+              <span className="text-[#484f58] font-mono text-xs hidden sm:inline">
+                {script.path}
+              </span>
+            )}
+          </div>
           <p className="text-[#8b949e] text-xs mt-0.5">{script.description}</p>
         </div>
-        <button
-          onClick={handleCopy}
-          className={cn(
-            "flex items-center gap-2 px-4 py-2 rounded-md text-sm font-mono transition-all",
-            "border border-[#30363d]",
-            copied
-              ? "bg-[#3fb950]/10 border-[#3fb950] text-[#3fb950]"
-              : "bg-[#21262d] text-[#c9d1d9] hover:bg-[#30363d] hover:border-[#58a6ff]"
+
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Override command button */}
+          {script.path && (
+            <button
+              onClick={handleCmdCopy}
+              title="Copy shell override command (cat > file heredoc)"
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-mono transition-all",
+                "border border-[#30363d]",
+                cmdCopied
+                  ? "bg-[#388bfd]/10 border-[#388bfd] text-[#388bfd]"
+                  : "bg-[#21262d] text-[#8b949e] hover:bg-[#30363d] hover:border-[#388bfd] hover:text-[#c9d1d9]"
+              )}
+            >
+              {cmdCopied ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span className="hidden sm:inline">Command copied!</span>
+                </>
+              ) : (
+                <>
+                  <Terminal className="w-4 h-4" />
+                  <span className="hidden sm:inline">Override cmd</span>
+                </>
+              )}
+            </button>
           )}
-        >
-          {copied ? (
-            <>
-              <Check className="w-4 h-4" />
-              Copied!
-            </>
-          ) : (
-            <>
-              <Copy className="w-4 h-4" />
-              Copy
-            </>
-          )}
-        </button>
+
+          {/* Copy code button */}
+          <button
+            onClick={handleCopy}
+            className={cn(
+              "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-mono transition-all",
+              "border border-[#30363d]",
+              copied
+                ? "bg-[#3fb950]/10 border-[#3fb950] text-[#3fb950]"
+                : "bg-[#21262d] text-[#c9d1d9] hover:bg-[#30363d] hover:border-[#58a6ff]"
+            )}
+          >
+            {copied ? (
+              <>
+                <Check className="w-4 h-4" />
+                <span className="hidden sm:inline">Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4" />
+                <span className="hidden sm:inline">Copy</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Code area */}

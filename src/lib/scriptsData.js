@@ -1,608 +1,238 @@
 const scripts = [
   {
-    id: "bot",
-    filename: "bot.py",
-    title: "Discord Bot — Remote Pi Control",
-    description: "Main Discord bot that listens for commands to control the Raspberry Pi remotely via a Discord server.",
-    tags: ["discord", "bot", "remote-control"],
-    code: `import discord
-from discord.ext import commands
-import subprocess
-import os
+    id: "main",
+    filename: "main.py",
+    path: "~/secure-pi-bot/main.py",
+    title: "Main Bot",
+    description: "Entry point. Sets up the Discord client, thermal monitor loop, and message routing.",
+    tags: ["discord", "bot", "thermal"],
+    code: `import os
+import sys
 from dotenv import load_dotenv
+import discord
+from discord.ext import tasks
+from modules.reactive import handle_reactive_command
 
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # YOUR_DISCORD_BOT_TOKEN
-GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0"))  # YOUR_DISCORD_GUILD_ID
-ALLOWED_ROLES = ["pi-admin", "pi-user"]
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+try:
+    ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
+    COMMAND_CHANNEL_ID = int(os.getenv("COMMAND_CHANNEL_ID", "0"))
+    ALERT_CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID", "0"))
+except ValueError:
+    ALLOWED_USER_ID = 0
+    COMMAND_CHANNEL_ID = 0
+    ALERT_CHANNEL_ID = 0
+
+if not TOKEN or ALLOWED_USER_ID == 0 or COMMAND_CHANNEL_ID == 0 or ALERT_CHANNEL_ID == 0:
+    print("CRITICAL: Environment variables (TOKEN, ALLOWED_USER_ID, COMMAND_CHANNEL_ID, ALERT_CHANNEL_ID) are misconfigured.")
+    sys.exit(1)
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
+client = discord.Client(intents=intents)
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+# Configuration Thresholds Matrix
+IS_TEST_MODE = "--alert-test" in sys.argv
+ALERT_THRESHOLD = 70.0  # Default safety ceiling for normal operations
 
+if IS_TEST_MODE:
+    try:
+        idx = sys.argv.index("--alert-test")
+        ALERT_THRESHOLD = float(sys.argv[idx + 1])
+        print(f"🔧 Testing parameter verified. Temporarily adjusting alert threshold to: {ALERT_THRESHOLD}°C")
+    except (ValueError, IndexError):
+        print("❌ Invalid test flag allocation. Syntax structure requires: --alert-test <number>")
+        sys.exit(1)
 
-def is_authorized(ctx):
-    """Check if user has an allowed role."""
-    if not ctx.guild:
-        return False
-    user_roles = [role.name.lower() for role in ctx.author.roles]
-    return any(role in user_roles for role in ALLOWED_ROLES)
+def get_core_temperature() -> float:
+    """Always reads true, un-simulated hardware metrics directly from the host filesystem."""
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+            return float(f.read().strip()) / 1000.0
+    except FileNotFoundError:
+        return 45.0  # Safe fallback if system file handle is missing
 
+@tasks.loop(seconds=60)
+async def passive_thermal_monitor():
+    await client.wait_until_ready()
+    temp = get_core_temperature()
 
-@bot.event
+    if temp >= ALERT_THRESHOLD:
+        alert_channel = client.get_channel(ALERT_CHANNEL_ID)
+        if alert_channel:
+            tag = "[TEST INTERCEPT]" if IS_TEST_MODE else "[🚨 THERMAL WARNING]"
+            await alert_channel.send(
+                f"⚠️ **{tag}** Raspberry Pi core temperature has breached the threshold!\\n"
+                f"**Current Core Temp:** \`{temp:.1f}°C\` (Active Threshold: \`{ALERT_THRESHOLD:.1f}°C\`)\\n"
+                f"Execute \`/cooldown\` if the metric scales past nominal parameters."
+            )
+        else:
+            print(f"❌ Core runtime error: Inability to resolve Alert Channel ID {ALERT_CHANNEL_ID}")
+
+@client.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print(f"Connected to guild ID: {GUILD_ID}")
-    print("------")
+    print(f"🤖 Bot online and verified as {client.user}")
+    if not passive_thermal_monitor.is_running():
+        passive_thermal_monitor.start()
 
-
-@bot.command(name="ping")
-async def ping(ctx):
-    """Check if the bot is alive."""
-    latency = round(bot.latency * 1000)
-    await ctx.send(f"Pong! Latency: {latency}ms")
-
-
-@bot.command(name="run")
-@commands.check(is_authorized)
-async def run_command(ctx, *, command: str):
-    """Run a shell command on the Pi. Requires pi-admin or pi-user role."""
-    try:
-        result = subprocess.run(
-            command, shell=True, capture_output=True,
-            text=True, timeout=30
-        )
-        output = result.stdout or result.stderr
-        if len(output) > 1900:
-            output = output[:1900] + "...\\n[output truncated]"
-        await ctx.send(f"\`\`\`\\n{output}\\n\`\`\`")
-    except subprocess.TimeoutExpired:
-        await ctx.send("Command timed out after 30 seconds.")
-    except Exception as e:
-        await ctx.send(f"Error: {e}")
-
-
-@bot.command(name="status")
-@commands.check(is_authorized)
-async def status(ctx):
-    """Get system status: CPU temp, memory, disk."""
-    try:
-        temp = subprocess.run(
-            ["vcgencmd", "measure_temp"], capture_output=True, text=True
-        ).stdout.strip()
-        mem = subprocess.run(
-            ["free", "-h"], capture_output=True, text=True
-        ).stdout.strip()
-        disk = subprocess.run(
-            ["df", "-h", "/"], capture_output=True, text=True
-        ).stdout.strip()
-
-        msg = f"**CPU Temp:** {temp}\\n"
-        msg += f"**Memory:**\\n\`\`\`\\n{mem}\\n\`\`\`\\n"
-        msg += f"**Disk:**\\n\`\`\`\\n{disk}\\n\`\`\`"
-        await ctx.send(msg)
-    except Exception as e:
-        await ctx.send(f"Error fetching status: {e}")
-
-
-@bot.command(name="reboot")
-@commands.has_role("pi-admin")
-async def reboot(ctx):
-    """Reboot the Pi. Requires pi-admin role."""
-    await ctx.send("Rebooting Pi...")
-    subprocess.run(["sudo", "reboot"])
-
-
-@bot.command(name="shutdown")
-@commands.has_role("pi-admin")
-async def shutdown(ctx):
-    """Shutdown the Pi. Requires pi-admin role."""
-    await ctx.send("Shutting down Pi...")
-    subprocess.run(["sudo", "shutdown", "-h", "now"])
-
-
-@run_command.error
-@status.error
-async def auth_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.send(
-            "You don't have permission. "
-            f"Required roles: {', '.join(ALLOWED_ROLES)}"
-        )
-
-
-@reboot.error
-@shutdown.error
-async def admin_error(ctx, error):
-    if isinstance(error, commands.MissingRole):
-        await ctx.send("This command requires the 'pi-admin' role.")
-
-
-if __name__ == "__main__":
-    bot.run(TOKEN)
-`
-  },
-  {
-    id: "system-monitor",
-    filename: "system_monitor.py",
-    title: "System Monitor",
-    description: "Monitors Pi system health — CPU temperature, memory usage, disk space, and sends alerts via Discord webhook.",
-    tags: ["monitoring", "system", "discord"],
-    code: `import subprocess
-import time
-import json
-import requests
-import os
-from datetime import datetime
-from dotenv import load_dotenv
-
-load_dotenv()
-
-WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")  # YOUR_DISCORD_WEBHOOK_URL
-CHECK_INTERVAL = 300  # seconds (5 minutes)
-CPU_TEMP_THRESHOLD = 75.0  # celsius
-MEM_THRESHOLD = 90.0  # percent
-DISK_THRESHOLD = 90.0  # percent
-
-
-def get_cpu_temp():
-    """Returns CPU temperature in celsius."""
-    try:
-        result = subprocess.run(
-            ["vcgencmd", "measure_temp"],
-            capture_output=True, text=True
-        )
-        temp_str = result.stdout.strip()
-        return float(temp_str.split("=")[1].split("'")[0])
-    except Exception:
-        return None
-
-
-def get_memory_usage():
-    """Returns memory usage percentage."""
-    try:
-        result = subprocess.run(
-            ["free", "-m"], capture_output=True, text=True
-        )
-        lines = result.stdout.strip().split("\\n")
-        mem_line = lines[1].split()
-        total = float(mem_line[1])
-        used = float(mem_line[2])
-        return (used / total) * 100
-    except Exception:
-        return None
-
-
-def get_disk_usage():
-    """Returns disk usage percentage for root partition."""
-    try:
-        result = subprocess.run(
-            ["df", "-h", "/"], capture_output=True, text=True
-        )
-        lines = result.stdout.strip().split("\\n")
-        usage_pct = lines[1].split()[-2].replace("%", "")
-        return float(usage_pct)
-    except Exception:
-        return None
-
-
-def get_uptime():
-    """Returns system uptime as a readable string."""
-    try:
-        result = subprocess.run(
-            ["uptime", "-p"], capture_output=True, text=True
-        )
-        return result.stdout.strip()
-    except Exception:
-        return "unknown"
-
-
-def send_discord_alert(title, description, color=0xFFA500):
-    """Send an embed alert to Discord via webhook."""
-    if not WEBHOOK_URL or WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL":
-        print(f"[ALERT] {title}: {description}")
+@client.event
+async def on_message(message):
+    if message.author.id == client.user.id:
+        return
+    if message.channel.id != COMMAND_CHANNEL_ID:
+        return
+    if message.author.id != ALLOWED_USER_ID:
         return
 
-    embed = {
-        "title": title,
-        "description": description,
-        "color": color,
-        "timestamp": datetime.utcnow().isoformat(),
-        "footer": {"text": "Pi System Monitor"}
-    }
-
-    try:
-        requests.post(
-            WEBHOOK_URL,
-            json={"embeds": [embed]},
-            timeout=10
-        )
-    except Exception as e:
-        print(f"Failed to send Discord alert: {e}")
-
-
-def check_system():
-    """Run all health checks and alert if thresholds exceeded."""
-    alerts = []
-
-    temp = get_cpu_temp()
-    if temp and temp >= CPU_TEMP_THRESHOLD:
-        alerts.append(f"CPU temperature is {temp}°C")
-
-    mem = get_memory_usage()
-    if mem and mem >= MEM_THRESHOLD:
-        alerts.append(f"Memory usage is {mem:.1f}%")
-
-    disk = get_disk_usage()
-    if disk and disk >= DISK_THRESHOLD:
-        alerts.append(f"Disk usage is {disk:.1f}%")
-
-    if alerts:
-        send_discord_alert(
-            "Pi System Alert",
-            "\\n".join(f"- {a}" for a in alerts),
-            color=0xFF0000
-        )
-
-
-def log_health():
-    """Log current health status to console."""
-    temp = get_cpu_temp()
-    mem = get_memory_usage()
-    disk = get_disk_usage()
-    uptime = get_uptime()
-
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-          f"Temp: {temp}°C | Mem: {mem:.1f}% | "
-          f"Disk: {disk:.1f}% | Uptime: {uptime}")
-
+    await handle_reactive_command(message)
 
 if __name__ == "__main__":
-    print("Starting Pi System Monitor...")
-    print(f"Check interval: {CHECK_INTERVAL}s")
-    print(f"Temp threshold: {CPU_TEMP_THRESHOLD}°C")
-    print(f"Memory threshold: {MEM_THRESHOLD}%")
-    print(f"Disk threshold: {DISK_THRESHOLD}%")
-
-    while True:
-        check_system()
-        log_health()
-        time.sleep(CHECK_INTERVAL)
+    client.run(TOKEN)
 `
   },
   {
-    id: "gpio-control",
-    filename: "gpio_control.py",
-    title: "GPIO Control Utilities",
-    description: "Helper functions for controlling GPIO pins — LEDs, relays, sensors. Used by other scripts to interact with Pi hardware.",
-    tags: ["gpio", "hardware", "utilities"],
-    code: `import RPi.GPIO as GPIO
-import time
-from typing import Optional, List
+    id: "status",
+    filename: "status.py",
+    path: "~/secure-pi-bot/scripts/status.py",
+    title: "scripts/status.py",
+    description: "System status report: core temp, CPU load (fixed), CPU freq in GHz, GPU freq in MHz, RAM usage, last upgrade.",
+    tags: ["status", "hardware", "psutil"],
+    code: `import sys
+import os
+import subprocess
 
+try:
+    import psutil
+except ImportError:
+    print("❌ Failure: dependency 'psutil' missing.")
+    sys.exit(1)
 
-# Pin numbering mode — use BCM (Broadcom) by default
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
+# Blocks for 0.5s to capture true real-time utilization delta
+cpu_usage = psutil.cpu_percent(interval=1)
 
+ram_percent = psutil.virtual_memory().percent
 
-class PinController:
-    """
-    Simple GPIO pin controller.
-    Usage:
-        led = PinController(17, mode="out")
-        led.on()
-        led.off()
-        led.blink(times=5, interval=0.5)
-        led.cleanup()
-    """
+# Fetch core temperature directly from sysfs
+try:
+    with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+        temp = f"{float(f.read().strip()) / 1000.0:.1f}°C"
+except FileNotFoundError:
+    temp = "Unknown"
 
-    def __init__(self, pin: int, mode: str = "out",
-                 initial: bool = False):
-        self.pin = pin
-        self.mode = mode
+# CPU frequency in GHz
+try:
+    freq = psutil.cpu_freq()
+    cpu_ghz = f"{freq.current / 1000:.2f} GHz"
+except Exception:
+    cpu_ghz = "Unknown"
 
-        if mode == "out":
-            GPIO.setup(pin, GPIO.OUT, initial=initial)
-        elif mode == "in":
-            GPIO.setup(pin, GPIO.IN,
-                       pull_up_down=GPIO.PUD_UP)
-        else:
-            raise ValueError("Mode must be 'in' or 'out'")
+# GPU frequency via vcgencmd
+try:
+    gpu_raw = subprocess.run(
+        ["vcgencmd", "measure_clock", "core"],
+        capture_output=True, text=True
+    ).stdout.strip()
+    # Output format: frequency(48)=500000000
+    gpu_hz = int(gpu_raw.split("=")[1])
+    gpu_mhz = f"{gpu_hz // 1_000_000} MHz"
+except Exception:
+    gpu_mhz = "Unknown"
 
-    def on(self):
-        """Set pin HIGH."""
-        GPIO.output(self.pin, GPIO.HIGH)
+# Fetch the last full upgrade timestamp from your secure local token
+try:
+    with open("/home/alon/.secrets/last_upgrade.txt", "r") as f:
+        last_upgrade = f.read().strip()
+except FileNotFoundError:
+    last_upgrade = "Unknown"
 
-    def off(self):
-        """Set pin LOW."""
-        GPIO.output(self.pin, GPIO.LOW)
-
-    def toggle(self):
-        """Toggle pin state."""
-        GPIO.output(self.pin,
-                    not GPIO.input(self.pin))
-
-    def read(self) -> bool:
-        """Read pin state (True = HIGH)."""
-        return bool(GPIO.input(self.pin))
-
-    def blink(self, times: int = 3,
-              interval: float = 0.5):
-        """Blink the pin on/off."""
-        for _ in range(times):
-            self.on()
-            time.sleep(interval)
-            self.off()
-            time.sleep(interval)
-
-    def cleanup(self):
-        """Reset pin to default state."""
-        GPIO.cleanup(self.pin)
-
-
-class RelayController(PinController):
-    """
-    Relay controller — extends PinController.
-    Active-low relay: writing LOW activates it.
-    """
-
-    def __init__(self, pin: int, active_low: bool = True):
-        super().__init__(pin, mode="out",
-                         initial=not active_low)
-        self.active_low = active_low
-
-    def activate(self):
-        """Turn relay ON."""
-        if self.active_low:
-            self.off()
-        else:
-            self.on()
-
-    def deactivate(self):
-        """Turn relay OFF."""
-        if self.active_low:
-            self.on()
-        else:
-            self.off()
-
-
-class ButtonSensor:
-    """
-    Simple button/push-switch sensor.
-    Usage:
-        btn = ButtonSensor(22)
-        if btn.is_pressed():
-            print("Button pressed!")
-    """
-
-    def __init__(self, pin: int):
-        self.pin = pin
-        GPIO.setup(pin, GPIO.IN,
-                   pull_up_down=GPIO.PUD_UP)
-
-    def is_pressed(self) -> bool:
-        """Returns True if button is currently pressed."""
-        return not GPIO.input(self.pin)
-
-    def wait_for_press(self, timeout: Optional[float] = None):
-        """Block until button is pressed."""
-        start = time.time()
-        while not self.is_pressed():
-            if timeout and (time.time() - start) > timeout:
-                raise TimeoutError("Button press timed out")
-            time.sleep(0.01)
-
-
-def cleanup_all():
-    """Clean up all GPIO pins."""
-    GPIO.cleanup()
-
-
-# Example usage
-if __name__ == "__main__":
-    try:
-        led = PinController(17)
-        led.blink(times=5, interval=0.3)
-
-        btn = ButtonSensor(22)
-        print("Press the button...")
-        btn.wait_for_press(timeout=10)
-        print("Button pressed!")
-
-    except KeyboardInterrupt:
-        print("\\nExiting...")
-    finally:
-        cleanup_all()
+print(
+    f"📊 **Pi Status Metrics**\\n"
+    f"**Core Temp:** {temp}\\n"
+    f"**CPU Load:** {cpu_usage}%\\n"
+    f"**CPU Speed:** {cpu_ghz}\\n"
+    f"**GPU Speed:** {gpu_mhz}\\n"
+    f"**Memory Usage:** {ram_percent}%\\n"
+    f"**Last Upgrade:** {last_upgrade}"
+)
 `
   },
   {
-    id: "scheduler",
-    filename: "task_scheduler.py",
-    title: "Task Scheduler",
-    description: "Simple cron-like scheduler for running Python functions on a schedule. Used for periodic automation tasks.",
-    tags: ["scheduling", "automation", "utilities"],
-    code: `import time
-import threading
-from datetime import datetime, timedelta
-from typing import Callable, Dict, List
+    id: "cooldown",
+    filename: "cooldown.py",
+    path: "~/secure-pi-bot/scripts/cooldown.py",
+    title: "scripts/cooldown.py",
+    description: "Reduces thermal overhead by stopping non-essential services (nginx, lightdm, bluetooth, cups).",
+    tags: ["thermal", "services", "systemctl"],
+    code: `import subprocess
+import os
+import sys
 
+def main():
+    print("🎯 Isolating core services to reduce thermal overhead...")
 
-class TaskScheduler:
-    """
-    Lightweight task scheduler for Raspberry Pi automation.
+    # Define non-essential heavy services that are safe to drop temporarily
+    target_services = ["nginx", "lightdm", "bluetooth", "cups"]
+    stopped_targets = []
 
-    Usage:
-        sched = TaskScheduler()
+    for service in target_services:
+        # Check if service is active before trying to shut it down
+        check = subprocess.run(["systemctl", "is-active", service], capture_output=True, text=True)
+        if check.stdout.strip() == "active":
+            print(f"🛑 Terminating service allocation: {service}")
+            subprocess.run(["sudo", "systemctl", "stop", service])
+            stopped_targets.append(service)
 
-        @sched.every(minutes=5)
-        def check_sensors():
-            print("Checking sensors...")
+    if stopped_targets:
+        print(f"✅ Safe thermal baseline reached. Suspended services: {', '.join(stopped_targets)}")
+    else:
+        print("✅ No high-overhead user-space services were active. System minimized.")
 
-        @sched.daily_at("08:00")
-        def morning_report():
-            print("Good morning!")
-
-        sched.start()  # Runs in background thread
-    """
-
-    def __init__(self):
-        self._tasks: List[Dict] = []
-        self._running = False
-        self._thread: threading.Thread = None
-
-    def every(self, seconds: int = 0, minutes: int = 0,
-              hours: int = 0):
-        """Decorator: run a function on a fixed interval."""
-        interval = seconds + minutes * 60 + hours * 3600
-
-        def decorator(func: Callable):
-            self._tasks.append({
-                "func": func,
-                "type": "interval",
-                "interval": interval,
-                "last_run": None,
-            })
-            return func
-        return decorator
-
-    def daily_at(self, time_str: str):
-        """Decorator: run a function daily at a specific time."""
-        def decorator(func: Callable):
-            self._tasks.append({
-                "func": func,
-                "type": "daily",
-                "time_str": time_str,
-                "last_run": None,
-            })
-            return func
-        return decorator
-
-    def _should_run(self, task: Dict) -> bool:
-        """Check if a task is due to run."""
-        now = datetime.now()
-
-        if task["type"] == "interval":
-            if task["last_run"] is None:
-                return True
-            elapsed = (now - task["last_run"]).total_seconds()
-            return elapsed >= task["interval"]
-
-        elif task["type"] == "daily":
-            target = datetime.strptime(
-                task["time_str"], "%H:%M"
-            ).time()
-            today_target = datetime.combine(
-                now.date(), target
-            )
-            if now < today_target:
-                return False
-            if task["last_run"] is None:
-                return True
-            return task["last_run"].date() < now.date()
-
-        return False
-
-    def _loop(self):
-        """Main scheduler loop — runs in background thread."""
-        while self._running:
-            now = datetime.now()
-            for task in self._tasks:
-                if self._should_run(task):
-                    try:
-                        task["func"]()
-                    except Exception as e:
-                        print(
-                            f"Scheduler error in "
-                            f"{task['func'].__name__}: {e}"
-                        )
-                    task["last_run"] = now
-            time.sleep(1)  # 1-second resolution
-
-    def start(self):
-        """Start the scheduler in a background thread."""
-        if self._running:
-            return
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True
-        )
-        self._thread.start()
-        print("Scheduler started.")
-
-    def stop(self):
-        """Stop the scheduler."""
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=2)
-        print("Scheduler stopped.")
-
-
-# Example usage
 if __name__ == "__main__":
-    sched = TaskScheduler()
-
-    @sched.every(seconds=10)
-    def heartbeat():
-        """Log a heartbeat every 10 seconds."""
-        print(
-            f"Heartbeat: "
-            f"{datetime.now().strftime('%H:%M:%S')}"
-        )
-
-    @sched.daily_at("09:00")
-    def daily_report():
-        """Run daily report at 9 AM."""
-        print("Generating daily report...")
-
-    sched.start()
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        sched.stop()
-        print("Scheduler stopped. Goodbye!")
+    main()
 `
   },
   {
-    id: "env-template",
-    filename: ".env.example",
-    title: "Environment Variables Template",
-    description: "Template .env file listing all required environment variables. Copy to .env and fill in your values.",
-    tags: ["config", "security"],
-    code: `# ============================================
-# Pi Lab — Environment Variables
-# Copy this file to .env and fill in values
-# NEVER commit .env to GitHub!
-# ============================================
+    id: "restart",
+    filename: "restart.py",
+    path: "~/secure-pi-bot/scripts/restart.py",
+    title: "scripts/restart.py",
+    description: "Sends a confirmation prompt before rebooting the Pi. Requires typing 'yes' to proceed.",
+    tags: ["reboot", "safety"],
+    code: `import subprocess
 
-# --- Discord Bot ---
-DISCORD_BOT_TOKEN=YOUR_DISCORD_BOT_TOKEN_HERE
-DISCORD_GUILD_ID=YOUR_DISCORD_GUILD_ID_HERE
+print("⚠️  **Reboot Confirmation Required**")
+print("Type 'yes' to confirm hardware reboot, or anything else to cancel:")
+confirm = input("> ").strip().lower()
 
-# --- Discord Webhooks ---
-DISCORD_WEBHOOK_URL=YOUR_DISCORD_WEBHOOK_URL_HERE
-
-# --- AI / LLM API Keys (future) ---
-OPENAI_API_KEY=YOUR_OPENAI_API_KEY_HERE
-ANTHROPIC_API_KEY=YOUR_ANTHROPIC_API_KEY_HERE
-
-# --- Network ---
-PI_HOSTNAME=raspberrypi
-PI_LOCAL_IP=192.168.x.x
-
-# --- GPIO Pin Map (add your pin assignments) ---
-# LED_PIN=17
-# RELAY_PIN=23
-# BUTTON_PIN=22
-# SENSOR_TRIGGER=24
-# SENSOR_ECHO=25
+if confirm == "yes":
+    print("🔄 Initializing hardware reboot wrapper...")
+    subprocess.run("sudo /sbin/shutdown -r now", shell=True)
+else:
+    print("❌ Reboot cancelled.")
 `
-  }
+  },
+  {
+    id: "shutdown",
+    filename: "shutdown.py",
+    path: "~/secure-pi-bot/scripts/shutdown.py",
+    title: "scripts/shutdown.py",
+    description: "Sends a confirmation prompt before shutting down the Pi. Requires typing 'yes' to proceed.",
+    tags: ["shutdown", "safety"],
+    code: `import subprocess
+
+print("⚠️  **Shutdown Confirmation Required**")
+print("Type 'yes' to confirm hardware poweroff, or anything else to cancel:")
+confirm = input("> ").strip().lower()
+
+if confirm == "yes":
+    print("🛑 Initializing hardware poweroff wrapper...")
+    subprocess.run("sudo /sbin/shutdown -h now", shell=True)
+else:
+    print("❌ Shutdown cancelled.")
+`
+  },
 ];
 
 export default scripts;
