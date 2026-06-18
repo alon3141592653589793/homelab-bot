@@ -198,19 +198,11 @@ if __name__ == "__main__":
     filename: "restart.py",
     path: "~/secure-pi-bot/scripts/restart.py",
     title: "scripts/restart.py",
-    description: "Sends a confirmation prompt before rebooting the Pi. Requires typing 'yes' to proceed.",
-    tags: ["reboot", "safety"],
+    description: "Hardware reboot wrapper. Confirmation handled by the bot's reactive module, not the script.",
+    tags: ["reboot"],
     code: `import subprocess
-
-print("⚠️  **Reboot Confirmation Required**")
-print("Type 'yes' to confirm hardware reboot, or anything else to cancel:")
-confirm = input("> ").strip().lower()
-
-if confirm == "yes":
-    print("🔄 Initializing hardware reboot wrapper...")
-    subprocess.run("sudo /sbin/shutdown -r now", shell=True)
-else:
-    print("❌ Reboot cancelled.")
+print("🔄 Initializing hardware reboot wrapper...")
+subprocess.run("sudo /sbin/shutdown -r now", shell=True)
 `
   },
   {
@@ -218,19 +210,11 @@ else:
     filename: "shutdown.py",
     path: "~/secure-pi-bot/scripts/shutdown.py",
     title: "scripts/shutdown.py",
-    description: "Sends a confirmation prompt before shutting down the Pi. Requires typing 'yes' to proceed.",
-    tags: ["shutdown", "safety"],
+    description: "Hardware poweroff wrapper. Confirmation handled by the bot's reactive module, not the script.",
+    tags: ["shutdown"],
     code: `import subprocess
-
-print("⚠️  **Shutdown Confirmation Required**")
-print("Type 'yes' to confirm hardware poweroff, or anything else to cancel:")
-confirm = input("> ").strip().lower()
-
-if confirm == "yes":
-    print("🛑 Initializing hardware poweroff wrapper...")
-    subprocess.run("sudo /sbin/shutdown -h now", shell=True)
-else:
-    print("❌ Shutdown cancelled.")
+print("🛑 Initializing hardware poweroff wrapper...")
+subprocess.run("sudo /sbin/shutdown -h now", shell=True)
 `
   },
 ];

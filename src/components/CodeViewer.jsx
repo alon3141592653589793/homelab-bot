@@ -15,8 +15,14 @@ export default function CodeViewer({ script }) {
   }, [script.code]);
 
   const handleCmdCopy = useCallback(async () => {
-    // Build a shell heredoc command to overwrite the file on the Pi
-    const cmd = `cat > ${script.path} << 'PILAB_EOF'\n${script.code}\nPILAB_EOF`;
+    // Encode as base64 — bulletproof, no escaping issues
+    const bytes = new TextEncoder().encode(script.code);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const b64 = btoa(binary);
+    const cmd = `echo '${b64}' | base64 -d > ${script.path}`;
     await navigator.clipboard.writeText(cmd);
     setCmdCopied(true);
     setTimeout(() => setCmdCopied(false), 2000);
