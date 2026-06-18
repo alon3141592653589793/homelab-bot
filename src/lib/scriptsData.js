@@ -80,7 +80,7 @@ async def on_message(message):
         return
     if message.author.id != ALLOWED_USER_ID:
         return
-    await handle_reactive_command(message)
+    await handle_reactive_command(client, message)
 
 if __name__ == "__main__":
     client.run(TOKEN)
@@ -94,7 +94,7 @@ if __name__ == "__main__":
     tags: ["router", "dispatcher"],
     code: `from modules.runner import run_script, confirm_and_run
 
-async def handle_reactive_command(message):
+async def handle_reactive_command(client, message):
     content = message.content.strip().lower()
 
     if content == "/status":
@@ -104,10 +104,10 @@ async def handle_reactive_command(message):
         await run_script(message, "cooldown.py", "Running thermal cooldown...")
 
     elif content == "/restart":
-        await confirm_and_run(message, "restart.py", "Reboot", "This will restart the Pi immediately.")
+        await confirm_and_run(client, message, "restart.py", "Reboot", "This will restart the Pi immediately.")
 
     elif content == "/shutdown":
-        await confirm_and_run(message, "shutdown.py", "Shutdown", "This will power off the Pi. Physical access required to turn it back on.")
+        await confirm_and_run(client, message, "shutdown.py", "Shutdown", "This will power off the Pi. Physical access required to turn it back on.")
 
     elif content == "/ramlog":
         await run_script(message, "ram_logger.py", "Logging RAM snapshot...")
@@ -159,7 +159,7 @@ async def run_script(message, script_name, status_msg):
         await message.channel.send(f"Script error: {e}")
 
 
-async def confirm_and_run(message, script_name, action_name, description):
+async def confirm_and_run(client, message, script_name, action_name, description):
     confirm_msg = await message.channel.send(
         f"[{action_name.upper()} - CONFIRMATION REQUIRED]\\n"
         f"{description}\\n\\n"
@@ -176,7 +176,7 @@ async def confirm_and_run(message, script_name, action_name, description):
         )
 
     try:
-        reaction, user = await message.client.wait_for("reaction_add", timeout=30.0, check=check)
+        reaction, user = await client.wait_for("reaction_add", timeout=30.0, check=check)
         if str(reaction.emoji) == "\\u2705":
             await message.channel.send(f"{action_name} confirmed. Executing...")
             await run_script(message, script_name, f"Running {script_name}...")
@@ -234,13 +234,13 @@ except FileNotFoundError:
     last_upgrade = "Unknown"
 
 print(
-    f"Pi Status Metrics\\n"
-    f"Core Temp:      {temp}\\n"
-    f"CPU Load:       {cpu_usage}%\\n"
-    f"CPU Speed:      {cpu_ghz}\\n"
-    f"GPU Speed:      {gpu_mhz}\\n"
-    f"Memory Usage:   {ram_percent}%\\n"
-    f"Last Upgrade:   {last_upgrade}"
+    f"**Pi Status Metrics**\\n"
+    f"**Core Temp:** {temp}\\n"
+    f"**CPU Load:** {cpu_usage}%\\n"
+    f"**CPU Speed:** {cpu_ghz}\\n"
+    f"**GPU Speed:** {gpu_mhz}\\n"
+    f"**Memory Usage:** {ram_percent}%\\n"
+    f"**Last Upgrade:** {last_upgrade}"
 )
 `,
   },
