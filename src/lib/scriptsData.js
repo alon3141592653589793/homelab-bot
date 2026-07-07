@@ -7,6 +7,7 @@ const scripts = [
     tags: ["discord", "bot", "listener"],
     code: `import os
 import sys
+import json
 from dotenv import load_dotenv
 import discord
 from discord.ext import tasks
@@ -52,6 +53,19 @@ def get_core_temperature() -> float:
     except FileNotFoundError:
         return 45.0
 
+STATUS_FILE = "/home/alon/secure-pi-bot/.bot_status.json"
+
+@tasks.loop(seconds=60)
+async def sync_bot_presence():
+    await client.wait_until_ready()
+    try:
+        with open(STATUS_FILE, "r") as f:
+            status_data = json.load(f)
+        status_text = status_data.get("text", "Pi Online")
+        await client.change_presence(activity=discord.Game(name=status_text))
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
 @tasks.loop(seconds=60)
 async def passive_thermal_monitor():
     await client.wait_until_ready()
@@ -71,6 +85,8 @@ async def on_ready():
     print(f"Bot online as {client.user}")
     if not passive_thermal_monitor.is_running():
         passive_thermal_monitor.start()
+    if not sync_bot_presence.is_running():
+        sync_bot_presence.start()
 
 @client.event
 async def on_message(message):
@@ -120,9 +136,11 @@ async def handle_reactive_command(client, message):
 
     elif content == "/setprofile restricted":
         await run_script(message, "set_profile_restricted.py", "Applying restricted profile...")
+        await run_script(message, "update_bot_status.py", "")
 
     elif content == "/setprofile unlimited":
         await run_script(message, "set_profile_unlimited.py", "Applying unlimited profile...")
+        await run_script(message, "update_bot_status.py", "")
 
     elif content == "/help":
         await message.channel.send(
@@ -550,6 +568,53 @@ print(
 `,
   },
   {
+    id: "update-bot-status",
+    filename: "update_bot_status.py",
+    path: "~/secure-pi-bot/scripts/update_bot_status.py",
+    description: "Updates the Discord bot's status message based on the active performance profile. Call from profile_scheduler.py or set_profile scripts to keep the bot presence in sync.",
+    tags: ["discord", "status", "performance"],
+    code: `import os
+import sys
+import json
+
+STATUS_FILE = "/home/alon/secure-pi-bot/.bot_status.json"
+STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
+
+try:
+    with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq") as f:
+        max_freq_khz = int(f.read().strip())
+except FileNotFoundError:
+    print("Could not read CPU freq.")
+    sys.exit(1)
+
+if max_freq_khz <= 600000:
+    profile = "restricted"
+    status_text = "Resting | 600 MHz | Powersave"
+    status_type = "idle"
+else:
+    profile = "unlimited"
+    status_text = "Active | 1.7 GHz | Schedutil"
+    status_type = "online"
+
+override_active = os.path.exists(STATE_FILE)
+if override_active:
+    status_text += " (manual)"
+
+# Write status file that main.py reads on its status update loop
+status_data = {
+    "profile": profile,
+    "text": status_text,
+    "type": status_type,
+    "override": override_active,
+}
+
+with open(STATUS_FILE, "w") as f:
+    json.dump(status_data, f)
+
+print(f"Bot status updated: {status_text}")
+`,
+  },
+  {
     id: "profile-scheduler",
     filename: "profile_scheduler.py",
     path: "~/secure-pi-bot/scripts/profile_scheduler.py",
@@ -612,13 +677,13 @@ sudo cat /usr/local/bin/pi-maintenance.sh
 
 
 # ============================================================
-# STEP 4 — Add all crontab entries (non-destructive, appends)
+# STEP 4 — REPLACE entire crontab (fixes any garbage entries)
 # ============================================================
-(crontab -l 2>/dev/null; printf "* * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py\\n*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py\\n0 3 * * * sudo /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1\\n") | crontab -
+printf "* * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py\\n*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py\\n0 3 * * * sudo /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1\\n" | crontab -
 
 
 # ============================================================
-# STEP 5 — Verify crontab
+# STEP 5 — Verify crontab (should show exactly 3 lines)
 # ============================================================
 crontab -l
 `,
