@@ -665,8 +665,8 @@ sudo shutdown -r +1 "Scheduled Daily Maintenance Reboot" >> "$LOG_FILE" 2>&1
   {
     id: "crontab",
     filename: "crontab.txt",
-    path: "crontab -e",
-    description: "Full crontab for alon. Apply with: crontab -e then paste all lines. RAM logging every 5min, profile scheduler every minute, maintenance + reboot at 3am.",
+    path: null,
+    description: "Full crontab for alon. To apply: copy the lines below, run 'crontab -e', and paste. Or pipe directly: (crontab -l; cat crontab.txt) | crontab -",
     tags: ["cron", "reference"],
     code: `# Pi Crontab — alon
 # Apply with: crontab -e

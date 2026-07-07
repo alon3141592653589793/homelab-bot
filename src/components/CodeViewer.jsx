@@ -15,14 +15,17 @@ export default function CodeViewer({ script }) {
   }, [script.code]);
 
   const handleCmdCopy = useCallback(async () => {
-    // Encode as base64 — bulletproof, no escaping issues
     const bytes = new TextEncoder().encode(script.code);
     let binary = '';
     for (let i = 0; i < bytes.length; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
     const b64 = btoa(binary);
-    const cmd = `echo '${b64}' | base64 -d > ${script.path}`;
+    // Use sudo tee for root-owned paths, plain redirect for user paths
+    const needsSudo = script.path && (script.path.startsWith('/usr/') || script.path.startsWith('/etc/') || script.path.startsWith('/opt/'));
+    const cmd = needsSudo
+      ? `echo '${b64}' | base64 -d | sudo tee ${script.path} > /dev/null`
+      : `echo '${b64}' | base64 -d > ${script.path}`;
     await navigator.clipboard.writeText(cmd);
     setCmdCopied(true);
     setTimeout(() => setCmdCopied(false), 2000);
@@ -61,7 +64,7 @@ export default function CodeViewer({ script }) {
 
         <div className="flex items-center gap-2 shrink-0">
           {/* Override command button */}
-          {script.path && (
+          {script.path && script.path !== null && (
             <button
               onClick={handleCmdCopy}
               title="Copy shell override command (cat > file heredoc)"
