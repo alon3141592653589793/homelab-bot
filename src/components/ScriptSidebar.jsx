@@ -11,6 +11,7 @@ const POLLING_RATES = [
 ];
 
 export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen, onMobileClose }) {
+  const [pollingOpen, setPollingOpen] = useState(false);
   return (
     <>
       {/* Mobile overlay */}
@@ -85,22 +86,28 @@ export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen,
         {/* Footer */}
         <div className="border-t border-[#21262d]">
           {/* Polling rates */}
-          <div className="px-4 py-3 border-b border-[#21262d]">
-            <div className="flex items-center gap-1.5 text-xs text-[#8b949e] font-mono mb-2">
+          <div className="border-b border-[#21262d]">
+            <button
+              onClick={() => setPollingOpen(o => !o)}
+              className="w-full px-4 py-3 flex items-center gap-1.5 text-xs text-[#8b949e] font-mono hover:text-[#e6edf3] transition-colors"
+            >
               <Clock className="w-3 h-3" />
               <span>polling rates</span>
-            </div>
-            <div className="space-y-1.5">
-              {POLLING_RATES.map((p) => (
-                <div key={p.label}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[#58a6ff] font-mono text-[10px] truncate">{p.label}</span>
-                    <span className="text-[#3fb950] font-mono text-[10px] shrink-0">{p.rate}</span>
+              <ChevronRight className={cn("w-3 h-3 ml-auto transition-transform", pollingOpen && "rotate-90")} />
+            </button>
+            {pollingOpen && (
+              <div className="px-4 pb-3 space-y-1.5">
+                {POLLING_RATES.map((p) => (
+                  <div key={p.label}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#58a6ff] font-mono text-[10px] truncate">{p.label}</span>
+                      <span className="text-[#3fb950] font-mono text-[10px] shrink-0">{p.rate}</span>
+                    </div>
+                    <p className="text-[#484f58] font-mono text-[10px]">{p.note}</p>
                   </div>
-                  <p className="text-[#484f58] font-mono text-[10px]">{p.note}</p>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="px-4 py-3">
             <div className="flex items-center gap-2 text-xs text-[#8b949e] font-mono">
