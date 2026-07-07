@@ -1,6 +1,14 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Code2, ChevronRight, Menu, X } from "lucide-react";
+import { Code2, ChevronRight, Menu, X, Clock } from "lucide-react";
+
+const POLLING_RATES = [
+  { label: "profile_scheduler.py", rate: "every 1 min", note: "auto-switches CPU/GPU profile" },
+  { label: "ram_logger.py", rate: "every 5 min", note: "logs RAM snapshot" },
+  { label: "passive_thermal_monitor", rate: "every 60 sec", note: "checks temp, alerts if hot" },
+  { label: "sync_bot_presence", rate: "every 60 sec", note: "updates Discord status" },
+  { label: "pi-maintenance.sh", rate: "daily 03:00", note: "OS upgrade + reboot" },
+];
 
 export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen, onMobileClose }) {
   return (
@@ -75,10 +83,30 @@ export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen,
         </nav>
 
         {/* Footer */}
-        <div className="px-4 py-3 border-t border-[#21262d]">
-          <div className="flex items-center gap-2 text-xs text-[#8b949e] font-mono">
-            <span className="w-2 h-2 rounded-full bg-[#3fb950]"></span>
-            {scripts.length} scripts loaded
+        <div className="border-t border-[#21262d]">
+          {/* Polling rates */}
+          <div className="px-4 py-3 border-b border-[#21262d]">
+            <div className="flex items-center gap-1.5 text-xs text-[#8b949e] font-mono mb-2">
+              <Clock className="w-3 h-3" />
+              <span>polling rates</span>
+            </div>
+            <div className="space-y-1.5">
+              {POLLING_RATES.map((p) => (
+                <div key={p.label}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[#58a6ff] font-mono text-[10px] truncate">{p.label}</span>
+                    <span className="text-[#3fb950] font-mono text-[10px] shrink-0">{p.rate}</span>
+                  </div>
+                  <p className="text-[#484f58] font-mono text-[10px]">{p.note}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-[#8b949e] font-mono">
+              <span className="w-2 h-2 rounded-full bg-[#3fb950]"></span>
+              {scripts.length} scripts loaded
+            </div>
           </div>
         </div>
       </aside>
