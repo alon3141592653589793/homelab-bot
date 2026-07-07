@@ -553,7 +553,7 @@ print(
     id: "profile-scheduler",
     filename: "profile_scheduler.py",
     path: "~/secure-pi-bot/scripts/profile_scheduler.py",
-    description: "Auto-switches profiles by time. Restricted 23:00-07:00, unlimited otherwise. Skips if manual override file exists. Run via cron every minute: * * * * * python3 ~/secure-pi-bot/scripts/profile_scheduler.py",
+    description: "Auto-switches profiles by time. Restricted 23:00-07:00, unlimited otherwise. Skips if manual override file exists. Add to existing crontab with: crontab -e  then append:  * * * * * python3 ~/secure-pi-bot/scripts/profile_scheduler.py",
     tags: ["performance", "scheduler", "cron"],
     code: `import subprocess
 import sys
