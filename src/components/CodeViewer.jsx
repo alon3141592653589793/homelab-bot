@@ -21,11 +21,11 @@ export default function CodeViewer({ script }) {
       binary += String.fromCharCode(bytes[i]);
     }
     const b64 = btoa(binary);
-    // Use sudo tee for root-owned paths, plain redirect for user paths
     const needsSudo = script.path && (script.path.startsWith('/usr/') || script.path.startsWith('/etc/') || script.path.startsWith('/opt/'));
+    // Use heredoc to avoid single-quote breakage in the base64 payload
     const cmd = needsSudo
-      ? `echo '${b64}' | base64 -d | sudo tee ${script.path} > /dev/null`
-      : `echo '${b64}' | base64 -d > ${script.path}`;
+      ? `base64 -d << 'B64EOF' | sudo tee ${script.path} > /dev/null\n${b64}\nB64EOF`
+      : `base64 -d << 'B64EOF' > ${script.path}\n${b64}\nB64EOF`;
     await navigator.clipboard.writeText(cmd);
     setCmdCopied(true);
     setTimeout(() => setCmdCopied(false), 2000);

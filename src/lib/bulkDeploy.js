@@ -23,12 +23,12 @@ export function buildBulkDeployCommand() {
       s.path.startsWith("/usr/") ||
       s.path.startsWith("/etc/") ||
       s.path.startsWith("/opt/");
-    // Ensure parent directory exists
     const mkdirCmd = `mkdir -p ${s.path.substring(0, s.path.lastIndexOf("/"))}`;
+    // Use heredoc to avoid any single-quote breakage in the base64 payload
     const writeCmd = needsSudo
-      ? `echo '${b64}' | base64 -d | sudo tee ${s.path} > /dev/null`
-      : `echo '${b64}' | base64 -d > ${s.path}`;
-    return `${mkdirCmd} && ${writeCmd}`;
+      ? `base64 -d << 'B64EOF' | sudo tee ${s.path} > /dev/null\n${b64}\nB64EOF`
+      : `base64 -d << 'B64EOF' > ${s.path}\n${b64}\nB64EOF`;
+    return `${mkdirCmd} && \\\n${writeCmd}`;
   });
 
   return lines.join(" && \\\n");
