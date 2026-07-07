@@ -588,6 +588,44 @@ elif not is_night and currently_restricted:
 `,
   },
   {
+    id: "oneshot",
+    filename: "one-time-setup.txt",
+    path: null,
+    description: "One-time setup commands — run these once to deploy scripts and configure the crontab. Copy each block individually.",
+    tags: ["setup", "one-time", "reference"],
+    code: `# ============================================================
+# STEP 1 — Restore pi-maintenance.sh (if overwritten)
+# ============================================================
+echo 'IyEvYmluL2Jhc2gKIyBNYXN0ZXIgTWFpbnRlbmFuY2UgU2NyaXB0IC0gTG9nZ2VkICYgU2hhYmJhdC1GcmVlCgpMT0dfRklMRT0iL3Zhci9sb2cvcGktbWFpbnRlbmFuY2UubG9nIgpRVUVVRT0iL2hvbWUvYWxvbi9zY3JpcHRzL2xvZ3MvbnRmeV9xdWV1ZS50eHQiCm1rZGlyIC1wIC9ob21lL2Fsb24vc2NyaXB0cy9sb2dzCgojIFN0cnVjdHVyYWwgT3BTZWMgY2hlY2sgbGlua2VkIGRpcmVjdGx5IHRvIHlvdXIgRGlzY29yZCBib3QgdG9nZ2xlCmlmIFsgLWYgL2hvbWUvYWxvbi9zZWN1cmUtcGktYm90Ly5tYWludGVuYW5jZV9kaXNhYmxlZCBdOyB0aGVuCiAgICBlY2hvICJbJChkYXRlICcrJVktJW0tJWQgJUg6JU06JVMnKV0gTWFpbnRlbmFuY2UgZGlzYWJsZWQgdmlhIERpc2NvcmQgdG9nZ2xlIGZpbGUuIEFib3J0aW5nIGV4ZWN1dGlvbiBwaXBlbGluZS4iID4+ICIkTE9HX0ZJTEUiCiAgICBleGl0IDAKZmkKCmxvZ19tc2coKSB7CiAgICBlY2hvICJbJChkYXRlICcrJVktJW0tJWQgJUg6JU06JVMnKV0gJDEiID4+ICIkTE9HX0ZJTEUiCn0KCmxvZ19tc2cgIi0tLSBTVEFSVElORyBNQUlOVEVOQU5DRSBDWUNMRSAtLS0iCmVjaG8gIi0tLSBEQUlMWSBQSSBSRVBPUlQgKCQoZGF0ZSAnKyVZLSVtLSVkJykpIC0tLSIgPiAiJFFVRVVFIgoKIyAxLiBBZEd1YXJkIEhvbWUgQ29yZSAmIEZpbHRlcnMgVXBkYXRlCmxvZ19tc2cgIlVwZ3JhZGluZyBBZEd1YXJkIEhvbWUgQ29yZS4uLiIKL29wdC9BZEd1YXJkSG9tZS9BZEd1YXJkSG9tZSAtcyB1cGdyYWRlID4+ICIkTE9HX0ZJTEUiIDI+JjEKCiMgMi4gT1MgVXBkYXRlcyAoa2VybmVsLCBzb2Z0d2FyZSwgZXZlcnl0aGluZykKbG9nX21zZyAiU3RhcnRpbmcgYXB0LWdldCB1cGRhdGUuLi4iCnN1ZG8gYXB0LWdldCB1cGRhdGUgLXkgPj4gIiRMT0dfRklMRSIgMj4mMQpsb2dfbXNnICJTdGFydGluZyBhcHQtZ2V0IGZ1bGwtdXBncmFkZS4uLiIKc3VkbyBhcHQtZ2V0IGZ1bGwtdXBncmFkZSAteSA+PiAiJExPR19GSUxFIiAyPiYxCmxvZ19tc2cgIlJlbW92aW5nIHVudXNlZCBwYWNrYWdlcy4uLiIKc3VkbyBhcHQtZ2V0IGF1dG9yZW1vdmUgLXkgPj4gIiRMT0dfRklMRSIgMj4mMQplY2hvICJPUyBVcGRhdGVzOiBTVUNDRVNTIiA+PiAiJFFVRVVFIgoKIyBPcFNlYy1zYWZlIGZsYXQtZmlsZSB0aW1lc3RhbXAgdG9rZW4gZm9yIHVzZXItc3BhY2UgZGFlbW9ucwpta2RpciAtcCAvaG9tZS9hbG9uLy5zZWNyZXRzCmRhdGUgJyslWS0lbS0lZCAlSDolTTolUycgPiAvaG9tZS9hbG9uLy5zZWNyZXRzL2xhc3RfdXBncmFkZS50eHQKY2hvd24gYWxvbjphbG9uIC9ob21lL2Fsb24vLnNlY3JldHMvbGFzdF91cGdyYWRlLnR4dAoKIyAzLiBTZWN1cml0eSBBdWRpdCAoU2tpcCBpZiAtLXF1aWNrIGlzIHBhc3NlZCkKaWYgW1sgIiQxIiA9PSAiLS1xdWljayIgXV07IHRoZW4KICAgIGxvZ19tc2cgIlNLSVBQSU5HIFNlY3VyaXR5IEF1ZGl0ICgtLXF1aWNrIGZsYWcgZGV0ZWN0ZWQpIgogICAgZWNobyAiQXVkaXQ6IFNLSVBQRUQgKFF1aWNrIFRlc3QpIiA+PiAiJFFVRVVFIgplbHNlCiAgICBsb2dfbXNnICJUcmlnZ2VyaW5nIGxvY2FsIHNlY3VyaXR5IGF1ZGl0IHNjcmlwdC4uLiIKICAgIHN1ZG8gL3Vzci9sb2NhbC9iaW4vcGktYXVkaXQuc2ggPj4gIiRMT0dfRklMRSIgMj4mMQogICAgZWNobyAiQXVkaXQ6IENPTVBMRVRFRCIgPj4gIiRRVUVVRSIKZmkKCiMgNC4gU2VydmljZSBIZWFsdGggQ2hlY2sKbG9nX21zZyAiQ2hlY2tpbmcgc3lzdGVtZCBzZXJ2aWNlIGhlYWx0aC4uLiIKRkFJTEVEPSQoc3lzdGVtY3RsIGxpc3QtdW5pdHMgLS1zdGF0ZT1mYWlsZWQgLS1uby1sZWdlbmQgLS1wbGFpbiB8IGdyZXAgLXYgImNsYW1hdi1kYWVtb24iIHwgYXdrICd7cHJpbnQgJDF9JykKaWYgWyAhIC16ICIkRkFJTEVEIiBdOyB0aGVuCiAgICBlY2hvICJGQUlMRUQgQVBQUzogJEZBSUxFRCIgPj4gIiRRVUVVRSIKICAgIGxvZ19tc2cgIkNSSVRJQ0FMOiBGYWlsZWQgc2VydmljZXMgZGV0ZWN0ZWQ6ICRGQUlMRUQiCmVsc2UKICAgIGVjaG8gIkFsbCBTeXN0ZW0gU2VydmljZXM6IE9LIiA+PiAiJFFVRVVFIgogICAgbG9nX21zZyAiQWxsIHNlcnZpY2VzIGhlYWx0aHkuIgpmaQoKIyA1LiBEZWxpdmVyeSAmIEZpbmFsIFN5bmMKbG9nX21zZyAiU3luY2luZyBmaWxlc3lzdGVtLi4uIgpzeW5jID4+ICIkTE9HX0ZJTEUiIDI+JjEKL3Vzci9sb2NhbC9iaW4vbnRmeS1xdWV1ZS5zaCA+PiAiJExPR19GSUxFIiAyPiYxCgojIDYuIFVuY29uZGl0aW9uYWwgUmVib290CmxvZ19tc2cgIk1haW50ZW5hbmNlIGNvbXBsZXRlLiBSZWJvb3RpbmcgaW4gNjAgc2Vjb25kcy4iCnN1ZG8gc2h1dGRvd24gLXIgKzEgIlNjaGVkdWxlZCBEYWlseSBNYWludGVuYW5jZSBSZWJvb3QiID4+ICIkTE9HX0ZJTEUiIDI+JjEK' | base64 -d | sudo tee /usr/local/bin/pi-maintenance.sh > /dev/null
+
+
+# ============================================================
+# STEP 2 — Make it executable
+# ============================================================
+sudo chmod +x /usr/local/bin/pi-maintenance.sh
+
+
+# ============================================================
+# STEP 3 — Verify the file looks correct
+# ============================================================
+sudo cat /usr/local/bin/pi-maintenance.sh
+
+
+# ============================================================
+# STEP 4 — Add all crontab entries (non-destructive, appends)
+# ============================================================
+(crontab -l 2>/dev/null; echo "* * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
+*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py
+0 3 * * * sudo /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1") | crontab -
+
+
+# ============================================================
+# STEP 5 — Verify crontab
+# ============================================================
+crontab -l
+`,
+  },
+  {
     id: "maintenance",
     filename: "pi-maintenance.sh",
     path: "/usr/local/bin/pi-maintenance.sh",
