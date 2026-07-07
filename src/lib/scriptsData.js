@@ -587,6 +587,105 @@ elif not is_night and currently_restricted:
     # Actually: set_profile_unlimited removes override, which is correct for auto-triggered too
 `,
   },
+  {
+    id: "maintenance",
+    filename: "pi-maintenance.sh",
+    path: "/usr/local/bin/pi-maintenance.sh",
+    description: "Master maintenance script. Runs nightly at 3am: AdGuard update, full OS upgrade, security audit, service health check, ntfy report, then reboots. Skips if .maintenance_disabled toggle exists.",
+    tags: ["maintenance", "bash", "cron"],
+    code: `#!/bin/bash
+# Master Maintenance Script - Logged & Shabbat-Free
+
+LOG_FILE="/var/log/pi-maintenance.log"
+QUEUE="/home/alon/scripts/logs/ntfy_queue.txt"
+mkdir -p /home/alon/scripts/logs
+
+# Structural OpSec check linked directly to your Discord bot toggle
+if [ -f /home/alon/secure-pi-bot/.maintenance_disabled ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Maintenance disabled via Discord toggle file. Aborting execution pipeline." >> "$LOG_FILE"
+    exit 0
+fi
+
+log_msg() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+log_msg "--- STARTING MAINTENANCE CYCLE ---"
+echo "--- DAILY PI REPORT ($(date '+%Y-%m-%d')) ---" > "$QUEUE"
+
+# 1. AdGuard Home Core & Filters Update
+log_msg "Upgrading AdGuard Home Core..."
+/opt/AdGuardHome/AdGuardHome -s upgrade >> "$LOG_FILE" 2>&1
+
+# 2. OS Updates (kernel, software, everything)
+log_msg "Starting apt-get update..."
+sudo apt-get update -y >> "$LOG_FILE" 2>&1
+log_msg "Starting apt-get full-upgrade..."
+sudo apt-get full-upgrade -y >> "$LOG_FILE" 2>&1
+log_msg "Removing unused packages..."
+sudo apt-get autoremove -y >> "$LOG_FILE" 2>&1
+echo "OS Updates: SUCCESS" >> "$QUEUE"
+
+# OpSec-safe flat-file timestamp token for user-space daemons
+mkdir -p /home/alon/.secrets
+date '+%Y-%m-%d %H:%M:%S' > /home/alon/.secrets/last_upgrade.txt
+chown alon:alon /home/alon/.secrets/last_upgrade.txt
+
+# 3. Security Audit (Skip if --quick is passed)
+if [[ "$1" == "--quick" ]]; then
+    log_msg "SKIPPING Security Audit (--quick flag detected)"
+    echo "Audit: SKIPPED (Quick Test)" >> "$QUEUE"
+else
+    log_msg "Triggering local security audit script..."
+    sudo /usr/local/bin/pi-audit.sh >> "$LOG_FILE" 2>&1
+    echo "Audit: COMPLETED" >> "$QUEUE"
+fi
+
+# 4. Service Health Check
+log_msg "Checking systemd service health..."
+FAILED=$(systemctl list-units --state=failed --no-legend --plain | grep -v "clamav-daemon" | awk '{print $1}')
+if [ ! -z "$FAILED" ]; then
+    echo "FAILED APPS: $FAILED" >> "$QUEUE"
+    log_msg "CRITICAL: Failed services detected: $FAILED"
+else
+    echo "All System Services: OK" >> "$QUEUE"
+    log_msg "All services healthy."
+fi
+
+# 5. Delivery & Final Sync
+log_msg "Syncing filesystem..."
+sync >> "$LOG_FILE" 2>&1
+/usr/local/bin/ntfy-queue.sh >> "$LOG_FILE" 2>&1
+
+# 6. Unconditional Reboot
+log_msg "Maintenance complete. Rebooting in 60 seconds."
+sudo shutdown -r +1 "Scheduled Daily Maintenance Reboot" >> "$LOG_FILE" 2>&1
+`,
+  },
+  {
+    id: "crontab",
+    filename: "crontab.txt",
+    path: "crontab -e",
+    description: "Full crontab for alon. Apply with: crontab -e then paste all lines. RAM logging every 5min, profile scheduler every minute, maintenance + reboot at 3am.",
+    tags: ["cron", "reference"],
+    code: `# Pi Crontab — alon
+# Apply with: crontab -e
+
+# --- Performance Profile Auto-Switcher ---
+# Switches to restricted (600 MHz) at 23:00, unlimited (1.7 GHz) at 07:00
+# Skips if manual override is active via Discord /setprofile command
+* * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
+
+# --- RAM Usage Logger ---
+# Logs bot RSS + system RAM every 5 minutes to jsonl log
+*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py
+
+# --- Nightly Maintenance + Reboot ---
+# Full OS upgrade (kernel + software), AdGuard update, audit, service check, then reboot
+# Runs at 03:00 daily. Skips if .maintenance_disabled toggle file exists.
+0 3 * * * sudo /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1
+`,
+  },
 ];
 
 export default scripts;
