@@ -462,6 +462,7 @@ import sys
 
 GOVERNOR = "powersave"
 MAX_FREQ = "600000"
+GPU_FREQ = "100"  # MHz — Pi4 minimum, bot needs no GPU
 STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
 CPU_CORES = 4
 
@@ -475,6 +476,10 @@ for core in range(CPU_CORES):
     write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_governor", GOVERNOR)
     write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_max_freq", MAX_FREQ)
 
+# Downclock GPU via config — writes to /boot/firmware/config.txt is persistent,
+# so use vcgencmd for runtime-only change (no reboot needed, resets on reboot)
+subprocess.run(["sudo", "vcgencmd", "set_config", f"core_freq={GPU_FREQ}"], capture_output=True)
+
 with open(STATE_FILE, "w") as f:
     f.write("restricted")
 
@@ -482,6 +487,7 @@ print(
     "**Profile: RESTRICTED applied**\\n"
     f"Governor: {GOVERNOR}\\n"
     f"Max freq: {int(MAX_FREQ) // 1000} MHz\\n"
+    f"GPU freq: {GPU_FREQ} MHz\\n"
     "Thermal ceiling: physically capped below 60C"
 )
 `,
@@ -498,6 +504,7 @@ import os
 
 GOVERNOR = "schedutil"
 MAX_FREQ = "1700000"
+GPU_FREQ = "500"  # MHz — Pi4 default
 STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
 CPU_CORES = 4
 
@@ -511,6 +518,8 @@ for core in range(CPU_CORES):
     write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_governor", GOVERNOR)
     write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_max_freq", MAX_FREQ)
 
+subprocess.run(["sudo", "vcgencmd", "set_config", f"core_freq={GPU_FREQ}"], capture_output=True)
+
 if os.path.exists(STATE_FILE):
     os.remove(STATE_FILE)
 
@@ -518,6 +527,7 @@ print(
     "**Profile: UNLIMITED applied**\\n"
     f"Governor: {GOVERNOR}\\n"
     f"Max freq: {int(MAX_FREQ) // 1000} MHz\\n"
+    f"GPU freq: {GPU_FREQ} MHz\\n"
     "Auto-scheduler override cleared. Scheduler will resume at next cron tick."
 )
 `,
