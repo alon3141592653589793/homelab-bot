@@ -679,7 +679,11 @@ sudo cat /usr/local/bin/pi-maintenance.sh
 # ============================================================
 # STEP 4 — REPLACE entire crontab (fixes any garbage entries)
 # ============================================================
-printf "* * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py\\n*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py\\n0 3 * * * sudo /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1\\n" | crontab -
+crontab - << 'CRONTAB_EOF'
+* * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
+*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py
+0 3 * * * sudo /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1
+CRONTAB_EOF
 
 
 # ============================================================
