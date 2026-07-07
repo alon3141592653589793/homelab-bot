@@ -142,6 +142,9 @@ async def handle_reactive_command(client, message):
         await run_script(message, "set_profile_unlimited.py", "Applying unlimited profile...")
         await run_script(message, "update_bot_status.py", "")
 
+    elif content == "/weeklyreport":
+        await run_script(message, "weekly_report.py", "Generating weekly report...")
+
     elif content == "/help":
         await message.channel.send(
             "Available commands:\\n"
@@ -151,6 +154,7 @@ async def handle_reactive_command(client, message):
             "/shutdown             - Power off Pi (requires confirmation)\\n"
             "/ramlog               - Take a RAM snapshot\\n"
             "/ramreport            - Analyze RAM history\\n"
+            "/weeklyreport         - Post weekly summary now\\n"
             "/profile              - Show current performance profile\\n"
             "/setprofile restricted - Force restricted profile (600 MHz, powersave)\\n"
             "/setprofile unlimited  - Force unlimited profile (1.7 GHz, schedutil)\\n"
@@ -758,6 +762,125 @@ sudo shutdown -r +1 "Scheduled Daily Maintenance Reboot" >> "$LOG_FILE" 2>&1
 `,
   },
   {
+    id: "weekly-report",
+    filename: "weekly_report.py",
+    path: "~/secure-pi-bot/scripts/weekly_report.py",
+    description: "Reads the last 7 days of RAM logs + system uptime and posts a weekly summary to the Discord alert channel. Run via cron: 0 9 * * 1 (every Monday at 09:00).",
+    tags: ["report", "discord", "memory", "weekly"],
+    code: `import os
+import sys
+import json
+import subprocess
+from datetime import datetime, timedelta
+
+try:
+    import psutil
+    import requests
+except ImportError as e:
+    print(f"FAILURE: missing dependency: {e}")
+    sys.exit(1)
+
+LOG_FILE = "/home/alon/secure-pi-bot/logs/ram_usage.jsonl"
+ENV_FILE = "/home/alon/secure-pi-bot/.env"
+
+# Load DISCORD_WEBHOOK_URL from .env
+webhook_url = None
+if os.path.exists(ENV_FILE):
+    with open(ENV_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("DISCORD_WEBHOOK_URL="):
+                webhook_url = line.split("=", 1)[1].strip().strip('"')
+
+if not webhook_url:
+    print("FAILURE: DISCORD_WEBHOOK_URL not set in .env")
+    sys.exit(1)
+
+# --- Uptime ---
+try:
+    boot_time = datetime.fromtimestamp(psutil.boot_time())
+    uptime_delta = datetime.now() - boot_time
+    uptime_days = uptime_delta.days
+    uptime_hours = uptime_delta.seconds // 3600
+    uptime_str = f"{uptime_days}d {uptime_hours}h"
+except Exception:
+    uptime_str = "Unknown"
+
+# --- RAM log: last 7 days ---
+cutoff = datetime.now() - timedelta(days=7)
+entries = []
+if os.path.exists(LOG_FILE):
+    with open(LOG_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+                if datetime.fromisoformat(e["ts"]) >= cutoff:
+                    entries.append(e)
+            except (json.JSONDecodeError, KeyError, ValueError):
+                continue
+
+# --- CPU avg from psutil samples in the log (sys_pct is RAM, not CPU — sample live) ---
+try:
+    cpu_avg = psutil.cpu_percent(interval=2)
+    cpu_str = f"{cpu_avg:.1f}%"
+except Exception:
+    cpu_str = "Unknown"
+
+# --- RAM stats ---
+if entries:
+    sys_pcts = [e["sys_pct"] for e in entries]
+    bot_readings = [e["bot_rss_mb"] for e in entries if e.get("bot_rss_mb") is not None]
+    ram_avg = sum(sys_pcts) / len(sys_pcts)
+    ram_min = min(sys_pcts)
+    ram_max = max(sys_pcts)
+    ram_str = f"Avg {ram_avg:.1f}% | Min {ram_min:.1f}% | Max {ram_max:.1f}%"
+    samples = len(entries)
+
+    if bot_readings:
+        drift = bot_readings[-1] - bot_readings[0]
+        drift_str = f"{'+' if drift >= 0 else ''}{drift:.1f} MB"
+        leak_warn = " ⚠️ possible leak" if drift > 10 else ""
+        bot_str = f"Avg {sum(bot_readings)/len(bot_readings):.1f} MB | Drift {drift_str}{leak_warn}"
+    else:
+        bot_str = "No bot process readings"
+else:
+    ram_str = "No data"
+    bot_str = "No data"
+    samples = 0
+
+# --- Sessions (restarts) ---
+restarts = 0
+if len(entries) > 1:
+    for i in range(1, len(entries)):
+        prev_t = datetime.fromisoformat(entries[i-1]["ts"])
+        curr_t = datetime.fromisoformat(entries[i]["ts"])
+        if (curr_t - prev_t).total_seconds() > 300:
+            restarts += 1
+
+week_label = datetime.now().strftime("%b %d")
+
+message = (
+    f"**📊 Weekly Pi Report — week ending {week_label}**\\n"
+    f"\\n"
+    f"**Uptime:** {uptime_str}  |  **Restarts detected:** {restarts}\\n"
+    f"**CPU (current):** {cpu_str}\\n"
+    f"**System RAM (7d):** {ram_str}\\n"
+    f"**Bot RSS (7d):** {bot_str}\\n"
+    f"**Log samples:** {samples} (past 7 days)"
+)
+
+resp = requests.post(webhook_url, json={"content": message}, timeout=10)
+if resp.status_code not in (200, 204):
+    print(f"FAILURE: webhook returned {resp.status_code}: {resp.text}")
+    sys.exit(1)
+
+print("Weekly report sent to Discord.")
+`,
+  },
+  {
     id: "crontab",
     filename: "crontab.txt",
     path: null,
@@ -772,8 +895,12 @@ sudo shutdown -r +1 "Scheduled Daily Maintenance Reboot" >> "$LOG_FILE" 2>&1
 * * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
 
 # --- RAM Usage Logger ---
-# Logs bot RSS + system RAM every 5 minutes to jsonl log
+# Logs bot RSS + system RAM every 15 minutes to jsonl log
 */15 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py
+
+# --- Weekly Discord Report ---
+# Posts a 7-day summary of RAM, uptime, and bot health every Monday at 09:00
+0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 
 # --- Nightly Maintenance + Reboot ---
 # Full OS upgrade (kernel + software), AdGuard update, audit, service check, then reboot

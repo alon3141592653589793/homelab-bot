@@ -7,6 +7,7 @@ const POLLING_RATES = [
   { label: "ram_logger.py", rate: "every 15 min", note: "logs RAM snapshot" },
   { label: "passive_thermal_monitor", rate: "every 60 sec", note: "checks temp, alerts if hot" },
   { label: "sync_bot_presence", rate: "every 4 min", note: "updates Discord status" },
+  { label: "weekly_report.py", rate: "Mon 09:00", note: "posts 7-day summary to Discord" },
   { label: "pi-maintenance.sh", rate: "daily 03:00", note: "OS upgrade + reboot" },
 ];
 
