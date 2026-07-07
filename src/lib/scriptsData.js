@@ -55,7 +55,7 @@ def get_core_temperature() -> float:
 
 STATUS_FILE = "/home/alon/secure-pi-bot/.bot_status.json"
 
-@tasks.loop(seconds=60)
+@tasks.loop(seconds=240)
 async def sync_bot_presence():
     await client.wait_until_ready()
     try:
@@ -691,7 +691,7 @@ sudo cat /usr/local/bin/pi-maintenance.sh
 # ============================================================
 crontab - << 'CRONTAB_EOF'
 * * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
-*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py
+*/15 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py
 0 3 * * * sudo /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1
 CRONTAB_EOF
 
@@ -793,7 +793,7 @@ sudo shutdown -r +1 "Scheduled Daily Maintenance Reboot" >> "$LOG_FILE" 2>&1
 
 # --- RAM Usage Logger ---
 # Logs bot RSS + system RAM every 5 minutes to jsonl log
-*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py
+*/15 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py
 
 # --- Nightly Maintenance + Reboot ---
 # Full OS upgrade (kernel + software), AdGuard update, audit, service check, then reboot

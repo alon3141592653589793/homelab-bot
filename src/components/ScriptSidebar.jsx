@@ -4,9 +4,9 @@ import { Code2, ChevronRight, Menu, X, Clock } from "lucide-react";
 
 const POLLING_RATES = [
   { label: "profile_scheduler.py", rate: "every 1 min", note: "auto-switches CPU/GPU profile" },
-  { label: "ram_logger.py", rate: "every 5 min", note: "logs RAM snapshot" },
+  { label: "ram_logger.py", rate: "every 15 min", note: "logs RAM snapshot" },
   { label: "passive_thermal_monitor", rate: "every 60 sec", note: "checks temp, alerts if hot" },
-  { label: "sync_bot_presence", rate: "every 60 sec", note: "updates Discord status" },
+  { label: "sync_bot_presence", rate: "every 4 min", note: "updates Discord status" },
   { label: "pi-maintenance.sh", rate: "daily 03:00", note: "OS upgrade + reboot" },
 ];
 
