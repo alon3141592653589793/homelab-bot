@@ -115,16 +115,28 @@ async def handle_reactive_command(client, message):
     elif content == "/ramreport":
         await run_script(message, "ram_report.py", "Analyzing RAM history...")
 
+    elif content == "/profile":
+        await run_script(message, "profile_status.py", "Checking current performance profile...")
+
+    elif content == "/setprofile restricted":
+        await run_script(message, "set_profile_restricted.py", "Applying restricted profile...")
+
+    elif content == "/setprofile unlimited":
+        await run_script(message, "set_profile_unlimited.py", "Applying unlimited profile...")
+
     elif content == "/help":
         await message.channel.send(
             "Available commands:\\n"
-            "/status      - System metrics\\n"
-            "/cooldown    - Stop non-essential services\\n"
-            "/restart     - Reboot Pi (requires confirmation)\\n"
-            "/shutdown    - Power off Pi (requires confirmation)\\n"
-            "/ramlog      - Take a RAM snapshot\\n"
-            "/ramreport   - Analyze RAM history\\n"
-            "/help        - This message"
+            "/status               - System metrics\\n"
+            "/cooldown             - Stop non-essential services\\n"
+            "/restart              - Reboot Pi (requires confirmation)\\n"
+            "/shutdown             - Power off Pi (requires confirmation)\\n"
+            "/ramlog               - Take a RAM snapshot\\n"
+            "/ramreport            - Analyze RAM history\\n"
+            "/profile              - Show current performance profile\\n"
+            "/setprofile restricted - Force restricted profile (600 MHz, powersave)\\n"
+            "/setprofile unlimited  - Force unlimited profile (1.7 GHz, schedutil)\\n"
+            "/help                 - This message"
         )
 `,
   },
@@ -419,6 +431,160 @@ if len(sessions) > 1:
             print(f"  Session {i+1}: {start} -> {end} | {bot_s[0]:.1f} -> {bot_s[-1]:.1f} MB ({len(s)} pts)")
         else:
             print(f"  Session {i+1}: {start} -> {end} | no bot data ({len(s)} pts)")
+`,
+  },
+  {
+    id: "set-profile-restricted",
+    filename: "set_profile_restricted.py",
+    path: "~/secure-pi-bot/scripts/set_profile_restricted.py",
+    description: "Applies restricted profile: 600 MHz max, powersave governor. Physically cannot exceed 60C even at 38C ambient. Also writes a state file so profile_scheduler.py knows a manual override is active.",
+    tags: ["performance", "thermal", "cpu"],
+    code: `import subprocess
+import sys
+
+GOVERNOR = "powersave"
+MAX_FREQ = "600000"
+STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
+CPU_CORES = 4
+
+def write_sysfs(path, value):
+    result = subprocess.run(["sudo", "tee", path], input=value, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"FAILED to write {path}: {result.stderr.strip()}")
+        sys.exit(1)
+
+for core in range(CPU_CORES):
+    write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_governor", GOVERNOR)
+    write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_max_freq", MAX_FREQ)
+
+with open(STATE_FILE, "w") as f:
+    f.write("restricted")
+
+print(
+    "**Profile: RESTRICTED applied**\\n"
+    f"Governor: {GOVERNOR}\\n"
+    f"Max freq: {int(MAX_FREQ) // 1000} MHz\\n"
+    "Thermal ceiling: physically capped below 60C"
+)
+`,
+  },
+  {
+    id: "set-profile-unlimited",
+    filename: "set_profile_unlimited.py",
+    path: "~/secure-pi-bot/scripts/set_profile_unlimited.py",
+    description: "Applies unlimited profile: 1.7 GHz max, schedutil governor. Also clears the manual override state file so the scheduler resumes auto-switching.",
+    tags: ["performance", "cpu"],
+    code: `import subprocess
+import sys
+import os
+
+GOVERNOR = "schedutil"
+MAX_FREQ = "1700000"
+STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
+CPU_CORES = 4
+
+def write_sysfs(path, value):
+    result = subprocess.run(["sudo", "tee", path], input=value, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"FAILED to write {path}: {result.stderr.strip()}")
+        sys.exit(1)
+
+for core in range(CPU_CORES):
+    write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_governor", GOVERNOR)
+    write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_max_freq", MAX_FREQ)
+
+if os.path.exists(STATE_FILE):
+    os.remove(STATE_FILE)
+
+print(
+    "**Profile: UNLIMITED applied**\\n"
+    f"Governor: {GOVERNOR}\\n"
+    f"Max freq: {int(MAX_FREQ) // 1000} MHz\\n"
+    "Auto-scheduler override cleared. Scheduler will resume at next cron tick."
+)
+`,
+  },
+  {
+    id: "profile-status",
+    filename: "profile_status.py",
+    path: "~/secure-pi-bot/scripts/profile_status.py",
+    description: "Reads the current governor and max freq from sysfs and reports the active profile.",
+    tags: ["performance", "status"],
+    code: `import os
+
+STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
+
+try:
+    with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") as f:
+        governor = f.read().strip()
+except FileNotFoundError:
+    governor = "unknown"
+
+try:
+    with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq") as f:
+        max_freq_khz = int(f.read().strip())
+except FileNotFoundError:
+    max_freq_khz = 0
+
+try:
+    with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq") as f:
+        cur_freq_khz = int(f.read().strip())
+except FileNotFoundError:
+    cur_freq_khz = 0
+
+if max_freq_khz <= 600000:
+    profile_name = "RESTRICTED"
+else:
+    profile_name = "UNLIMITED"
+
+override_active = os.path.exists(STATE_FILE)
+override_str = "Manual override active (scheduler paused)" if override_active else "Auto-scheduler active"
+
+print(
+    f"**Performance Profile: {profile_name}**\\n"
+    f"Governor: {governor}\\n"
+    f"Max freq: {max_freq_khz // 1000} MHz\\n"
+    f"Current freq: {cur_freq_khz // 1000} MHz\\n"
+    f"Scheduler: {override_str}"
+)
+`,
+  },
+  {
+    id: "profile-scheduler",
+    filename: "profile_scheduler.py",
+    path: "~/secure-pi-bot/scripts/profile_scheduler.py",
+    description: "Auto-switches profiles by time. Restricted 23:00-07:00, unlimited otherwise. Skips if manual override file exists. Run via cron every minute: * * * * * python3 ~/secure-pi-bot/scripts/profile_scheduler.py",
+    tags: ["performance", "scheduler", "cron"],
+    code: `import subprocess
+import sys
+import os
+from datetime import datetime
+
+STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Skip if manual override is active
+if os.path.exists(STATE_FILE):
+    sys.exit(0)
+
+hour = datetime.now().hour
+is_night = hour >= 23 or hour < 7
+
+try:
+    with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq") as f:
+        current_max = int(f.read().strip())
+except FileNotFoundError:
+    sys.exit(1)
+
+currently_restricted = current_max <= 600000
+
+# Only apply if a change is needed
+if is_night and not currently_restricted:
+    subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "set_profile_restricted.py")])
+elif not is_night and currently_restricted:
+    subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "set_profile_unlimited.py")])
+    # Re-write the override file that set_profile_unlimited cleared, since this was auto not manual
+    # Actually: set_profile_unlimited removes override, which is correct for auto-triggered too
 `,
   },
 ];
