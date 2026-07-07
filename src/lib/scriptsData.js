@@ -220,11 +220,10 @@ async def confirm_and_run(client, message, script_name, action_name, description
     id: "status",
     filename: "status.py",
     path: "~/secure-pi-bot/scripts/status.py",
-    description: "Outputs system metrics: core temp, CPU load, CPU freq, GPU freq, RAM usage, last upgrade.",
+    description: "Outputs system metrics: core temp, CPU load, CPU freq, RAM usage, last upgrade.",
     tags: ["status", "hardware", "psutil"],
     code: `import sys
 import os
-import subprocess
 
 try:
     import psutil
@@ -248,16 +247,6 @@ except Exception:
     cpu_ghz = "Unknown"
 
 try:
-    gpu_raw = subprocess.run(
-        ["vcgencmd", "measure_clock", "core"],
-        capture_output=True, text=True
-    ).stdout.strip()
-    gpu_hz = int(gpu_raw.split("=")[1])
-    gpu_mhz = f"{gpu_hz // 1_000_000} MHz"
-except Exception:
-    gpu_mhz = "Unknown"
-
-try:
     with open("/home/alon/.secrets/last_upgrade.txt", "r") as f:
         last_upgrade = f.read().strip()
 except FileNotFoundError:
@@ -268,7 +257,6 @@ print(
     f"**Core Temp:** {temp}\\n"
     f"**CPU Load:** {cpu_usage}%\\n"
     f"**CPU Speed:** {cpu_ghz}\\n"
-    f"**GPU Speed:** {gpu_mhz}\\n"
     f"**Memory Usage:** {ram_percent}%\\n"
     f"**Last Upgrade:** {last_upgrade}"
 )
@@ -455,14 +443,13 @@ if len(sessions) > 1:
     id: "set-profile-restricted",
     filename: "set_profile_restricted.py",
     path: "~/secure-pi-bot/scripts/set_profile_restricted.py",
-    description: "Applies restricted profile: 600 MHz max, powersave governor. Physically cannot exceed 60C even at 38C ambient. Also writes a state file so profile_scheduler.py knows a manual override is active.",
+    description: "Applies restricted profile: 600 MHz max, powersave governor. Physically cannot exceed 60C even at 38C ambient. Also writes a state file so profile_scheduler.py knows a manual override is active. GPU is left at its 250 MHz hardware default.",
     tags: ["performance", "thermal", "cpu"],
     code: `import subprocess
 import sys
 
 GOVERNOR = "powersave"
 MAX_FREQ = "600000"
-GPU_FREQ = "100"  # MHz — Pi4 minimum, bot needs no GPU
 STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
 CPU_CORES = 4
 
@@ -478,8 +465,6 @@ for core in range(CPU_CORES):
 
 # Downclock GPU via config — writes to /boot/firmware/config.txt is persistent,
 # so use vcgencmd for runtime-only change (no reboot needed, resets on reboot)
-subprocess.run(["sudo", "vcgencmd", "set_config", f"core_freq={GPU_FREQ}"], capture_output=True)
-
 with open(STATE_FILE, "w") as f:
     f.write("restricted")
 
@@ -487,7 +472,6 @@ print(
     "**Profile: RESTRICTED applied**\\n"
     f"Governor: {GOVERNOR}\\n"
     f"Max freq: {int(MAX_FREQ) // 1000} MHz\\n"
-    f"GPU freq: {GPU_FREQ} MHz\\n"
     "Thermal ceiling: physically capped below 60C"
 )
 `,
@@ -504,7 +488,6 @@ import os
 
 GOVERNOR = "schedutil"
 MAX_FREQ = "1700000"
-GPU_FREQ = "500"  # MHz — Pi4 default
 STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
 CPU_CORES = 4
 
@@ -518,8 +501,6 @@ for core in range(CPU_CORES):
     write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_governor", GOVERNOR)
     write_sysfs(f"/sys/devices/system/cpu/cpu{core}/cpufreq/scaling_max_freq", MAX_FREQ)
 
-subprocess.run(["sudo", "vcgencmd", "set_config", f"core_freq={GPU_FREQ}"], capture_output=True)
-
 if os.path.exists(STATE_FILE):
     os.remove(STATE_FILE)
 
@@ -527,7 +508,6 @@ print(
     "**Profile: UNLIMITED applied**\\n"
     f"Governor: {GOVERNOR}\\n"
     f"Max freq: {int(MAX_FREQ) // 1000} MHz\\n"
-    f"GPU freq: {GPU_FREQ} MHz\\n"
     "Auto-scheduler override cleared. Scheduler will resume at next cron tick."
 )
 `,
