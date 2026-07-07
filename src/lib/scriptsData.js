@@ -251,6 +251,14 @@ except Exception:
     cpu_ghz = "Unknown"
 
 try:
+    import subprocess
+    result = subprocess.run(["vcgencmd", "measure_clock", "core"], capture_output=True, text=True)
+    gpu_hz = int(result.stdout.strip().split("=")[1])
+    gpu_mhz = f"{gpu_hz // 1000000} MHz"
+except Exception:
+    gpu_mhz = "Unknown"
+
+try:
     with open("/home/alon/.secrets/last_upgrade.txt", "r") as f:
         last_upgrade = f.read().strip()
 except FileNotFoundError:
@@ -261,6 +269,7 @@ print(
     f"**Core Temp:** {temp}\\n"
     f"**CPU Load:** {cpu_usage}%\\n"
     f"**CPU Speed:** {cpu_ghz}\\n"
+    f"**GPU Clock:** {gpu_mhz}\\n"
     f"**Memory Usage:** {ram_percent}%\\n"
     f"**Last Upgrade:** {last_upgrade}"
 )
