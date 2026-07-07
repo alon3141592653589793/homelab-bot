@@ -614,9 +614,7 @@ sudo cat /usr/local/bin/pi-maintenance.sh
 # ============================================================
 # STEP 4 — Add all crontab entries (non-destructive, appends)
 # ============================================================
-(crontab -l 2>/dev/null; echo "* * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
-*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py
-0 3 * * * sudo /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; printf "* * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py\\n*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/ram_logger.py\\n0 3 * * * sudo /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1\\n") | crontab -
 
 
 # ============================================================
