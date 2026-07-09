@@ -3,13 +3,13 @@ import { cn } from "@/lib/utils";
 import { Code2, ChevronRight, Menu, X, Clock } from "lucide-react";
 
 const POLLING_RATES = [
-  { label: "profile_scheduler.py", rate: "every 1 min", note: "auto-switches CPU profile" },
-  { label: "fan_logger.py", rate: "every 1 min", note: "logs fan ON/OFF events to RAM" },
-  { label: "system_logger.py", rate: "every 10 min", note: "logs temp, RAM, failed services" },
-  { label: "passive_thermal_monitor", rate: "every 60 sec", note: "alerts if temp threshold breached" },
-  { label: "sync_bot_presence", rate: "every 4 min", note: "updates Discord status" },
-  { label: "weekly_report.py", rate: "Mon 09:00", note: "posts weekly report to Discord" },
-  { label: "pi-maintenance.sh", rate: "daily 03:00", note: "OS upgrade + compress logs + reboot" },
+  { label: "profile_scheduler.py", rate: "every 1 min", note: "instant exit if no change needed" },
+  { label: "fan_logger.py", rate: "every 1 min", note: "exit if /dev/shm/pi-bot missing" },
+  { label: "system_logger.py", rate: "every 10 min", note: "only if .logging_enabled exists" },
+  { label: "passive_thermal_monitor", rate: "every 60 sec", note: "5min cooldown between alerts" },
+  { label: "sync_bot_presence", rate: "every 4 min", note: "reads from /dev/shm (RAM)" },
+  { label: "weekly_report.py", rate: "Mon 09:00", note: "posts to report channel" },
+  { label: "pi-maintenance.sh", rate: "daily 03:00", note: "flush logs + OS upgrade + reboot" },
 ];
 
 export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen, onMobileClose }) {
