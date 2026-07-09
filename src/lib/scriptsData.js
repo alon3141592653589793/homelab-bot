@@ -182,11 +182,11 @@ async def handle_reactive_command(client, message):
             await message.channel.send(f"Error: {e}")
 
     elif raw.lower().startswith("/aidebug "):
-        prompt = raw[9:].strip()
-        if prompt:
-            await run_script(message, "ai_debug.py", f"AI diagnostic: {prompt[:60]}...", args=[prompt])
+        rest = raw[9:].strip()
+        if rest:
+            await run_script(message, "ai_debug.py", f"AI diagnostic: {rest[:60]}...", args=rest.split(" ", 1) if rest.startswith("gemini-") else [rest])
         else:
-            await message.channel.send("Usage: /aidebug <question>")
+            await message.channel.send("Usage: /aidebug <question>\\nOptional: /aidebug gemini-3.5-flash <question>")
 
     elif content == "/help":
         await message.channel.send(
@@ -309,8 +309,8 @@ gpu_mhz = f"{int(gpu_raw.split('=')[1]) // 1_000_000} MHz" if gpu_raw else "Unkn
 vm = psutil.virtual_memory()
 ram_str = f"{vm.used // (1024*1024)} MB / {vm.total // (1024*1024)} MB ({vm.percent}%)"
 
-# RAM speed
-sdram_raw = vcgencmd("measure_clock sdram_c")
+# RAM speed — try sdram_p (data bus, non-zero on Pi 4), fallback to sdram_c
+sdram_raw = vcgencmd("measure_clock sdram_p") or vcgencmd("measure_clock sdram_c")
 ram_speed = f"{int(sdram_raw.split('=')[1]) // 1_000_000} MHz" if sdram_raw else "Unknown"
 
 # Core voltage
@@ -839,7 +839,7 @@ print("Weekly report sent.")
     id: "ai-debug",
     filename: "ai_debug.py",
     path: "~/secure-pi-bot/scripts/ai_debug.py",
-    description: "Read-only AI diagnostic. Whitelist of safe commands only. Gemini Flash free tier. Rate limited 1/5min. API key from ~/.secrets/gemini_key (chmod 600).",
+    description: "Read-only AI diagnostic. Tries models in priority order until one works. Pass custom model as first arg before question, or leave empty for auto. Rate limited 1/5min.",
     tags: ["ai", "debug", "gemini", "diagnostic"],
     code: `import os
 import sys
@@ -850,27 +850,35 @@ from datetime import datetime
 
 BOT_DIR = "/home/alon/secure-pi-bot"
 REPORT_CHANNEL_ID = 1524756593651224706
-RATE_LIMIT_FILE = "/dev/shm/pi-bot/.ai_rate"  # RAM — no SD write
+RATE_LIMIT_FILE = "/dev/shm/pi-bot/.ai_rate"
 RATE_LIMIT_SECS = 300
+
+# Model priority chain — tried in order until one succeeds
+MODEL_PRIORITY = [
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-pro",
+    "gemini-3-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+]
 
 from dotenv import load_dotenv
 load_dotenv(f"{BOT_DIR}/.env")
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-# API key stored securely at ~/.secrets/gemini_key (chmod 600, not in .env)
 try:
     with open("/home/alon/.secrets/gemini_key") as f:
         GEMINI_KEY = f.read().strip()
 except OSError:
-    print("FAILURE: /home/alon/.secrets/gemini_key not found.\\n"
-          "Run: echo 'YOUR_KEY' > ~/.secrets/gemini_key && chmod 600 ~/.secrets/gemini_key")
+    print("FAILURE: /home/alon/.secrets/gemini_key not found.")
     sys.exit(1)
 
 if not BOT_TOKEN:
     print("FAILURE: DISCORD_BOT_TOKEN not set in .env")
     sys.exit(1)
 
-# Rate limit stored in RAM — no SD write
+# Rate limit in RAM
 now = time.time()
 os.makedirs("/dev/shm/pi-bot", exist_ok=True)
 try:
@@ -884,9 +892,20 @@ except OSError:
 with open(RATE_LIMIT_FILE, "w") as f:
     f.write(str(now))
 
-prompt = " ".join(sys.argv[1:]).strip() or "General health check"
+# Parse args: optional first arg can be a custom model name (contains "gemini")
+args = sys.argv[1:]
+custom_model = None
+if args and "gemini" in args[0].lower():
+    custom_model = args[0]
+    args = args[1:]
+prompt = " ".join(args).strip() or "General health check"
 
-# === READ-ONLY WHITELIST — no sudo, no writes, no network sniffing ===
+models_to_try = [custom_model] if custom_model else MODEL_PRIORITY
+
+# === READ-ONLY WHITELIST — no sudo, no writes, no shell=True ===
+# The AI NEVER decides what commands run. This list is hardcoded in Python.
+# subprocess.run() with a list (not a string) makes shell injection impossible.
+# The AI only receives the TEXT OUTPUT of these commands — it cannot execute anything.
 SAFE_COMMANDS = [
     ["systemctl", "list-units", "--state=failed", "--no-legend"],
     ["journalctl", "-p", "err", "-n", "20", "--no-pager"],
@@ -922,28 +941,38 @@ gemini_prompt = (
     "Give a concise diagnosis. Flag anything abnormal. Max 1200 characters."
 )
 
-url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
 payload = {
     "contents": [{"parts": [{"text": gemini_prompt}]}],
     "generationConfig": {"maxOutputTokens": 350, "temperature": 0.2}
 }
 
-try:
-    resp = requests.post(url, json=payload, timeout=20)
-    resp.raise_for_status()
-    ai_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-except Exception as e:
-    print(f"FAILURE: Gemini error: {e}")
+ai_text = None
+used_model = None
+for model in models_to_try:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
+    try:
+        resp = requests.post(url, json=payload, timeout=20)
+        if resp.status_code in (429, 503):
+            continue  # rate limited or overloaded — try next
+        resp.raise_for_status()
+        ai_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        used_model = model
+        break
+    except Exception:
+        continue
+
+if not ai_text:
+    print("FAILURE: All Gemini models failed or unavailable.")
     sys.exit(1)
 
-# Post to report channel
 durl = f"https://discord.com/api/v10/channels/{REPORT_CHANNEL_ID}/messages"
 hdrs = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
-msg = f"**AI Debug** [{datetime.now().strftime('%H:%M')}] {prompt[:60]}\\n\\n{ai_text}"
+header = f"**AI Debug** [{datetime.now().strftime('%H:%M')}] model: \`{used_model}\` | {prompt[:60]}\\n\\n"
+msg = header + ai_text
 for chunk in [msg[i:i+1900] for i in range(0, len(msg), 1900)]:
     requests.post(durl, json={"content": chunk}, headers=hdrs, timeout=10)
 
-print(f"Posted to channel {REPORT_CHANNEL_ID}.")
+print(f"Posted using {used_model}.")
 `,
   },
   {
