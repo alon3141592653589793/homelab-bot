@@ -197,7 +197,7 @@ async def handle_reactive_command(client, message):
     elif content == "/cooldown":
         await run_script(message, "cooldown.py", "Running thermal cooldown...")
 
-    elif content == "/restart":
+    elif content in ("/restart", "/reboot"):
         await confirm_and_run(client, message, "restart.py", "Reboot", "This will restart the Pi immediately.")
 
     elif content == "/shutdown":
@@ -1207,7 +1207,7 @@ else:
     id: "restart",
     filename: "restart.py",
     path: "~/secure-pi-bot/scripts/restart.py",
-    description: "Compresses logs then reboots. Captures and logs shutdown errors to /dev/shm. Returns actual error to Discord if it fails.",
+    description: "Logs then reboots via sudo. Requires sudoers rule: alon ALL=(root) NOPASSWD: /sbin/shutdown",
     tags: ["reboot"],
     code: `import subprocess, os, json
 from datetime import datetime
@@ -1216,7 +1216,11 @@ LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
 
 print("Flushing logs...")
 subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
-result = subprocess.run(["/sbin/shutdown", "-r", "now"], capture_output=True, text=True, timeout=10)
+
+# Try sudo first (needs NOPASSWD sudoers rule), fall back to plain shutdown
+result = subprocess.run(["sudo", "-n", "/sbin/shutdown", "-r", "now"], capture_output=True, text=True, timeout=10)
+if result.returncode != 0:
+    result = subprocess.run(["/sbin/shutdown", "-r", "now"], capture_output=True, text=True, timeout=10)
 if result.returncode != 0:
     err = result.stderr.strip() or result.stdout.strip() or "unknown error"
     print(f"FAILED to reboot: {err}")
@@ -1241,7 +1245,7 @@ else:
     id: "shutdown",
     filename: "shutdown.py",
     path: "~/secure-pi-bot/scripts/shutdown.py",
-    description: "Compresses logs then powers off. Captures and logs shutdown errors to /dev/shm. Returns actual error to Discord if it fails.",
+    description: "Logs then powers off via sudo. Requires sudoers rule: alon ALL=(root) NOPASSWD: /sbin/shutdown",
     tags: ["shutdown"],
     code: `import subprocess, os, json
 from datetime import datetime
@@ -1250,7 +1254,11 @@ LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
 
 print("Flushing logs...")
 subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
-result = subprocess.run(["/sbin/shutdown", "-h", "now"], capture_output=True, text=True, timeout=10)
+
+# Try sudo first (needs NOPASSWD sudoers rule), fall back to plain shutdown
+result = subprocess.run(["sudo", "-n", "/sbin/shutdown", "-h", "now"], capture_output=True, text=True, timeout=10)
+if result.returncode != 0:
+    result = subprocess.run(["/sbin/shutdown", "-h", "now"], capture_output=True, text=True, timeout=10)
 if result.returncode != 0:
     err = result.stderr.strip() or result.stdout.strip() or "unknown error"
     print(f"FAILED to power off: {err}")
@@ -1570,6 +1578,13 @@ echo 'SUBSYSTEM=="cpu", ACTION=="add", RUN+="/bin/chmod -R a+w /sys/devices/syst
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 # After this, set_profile_restricted.py and set_profile_unlimited.py need NO sudo at all.
+
+# ============================================================
+# SUDOERS — allow alon to reboot/shutdown without password prompt
+# ============================================================
+# This lets /restart, /reboot, and /shutdown work from the Discord bot:
+echo 'alon ALL=(root) NOPASSWD: /sbin/shutdown' | sudo tee /etc/sudoers.d/pi-bot-shutdown
+sudo chmod 440 /etc/sudoers.d/pi-bot-shutdown
 
 # ============================================================
 # DIRECTORIES + LOGGING ENABLE
