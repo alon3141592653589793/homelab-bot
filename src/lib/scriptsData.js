@@ -1097,11 +1097,14 @@ gemini_prompt = (
     f'User asks: "{prompt}"\\n\\n'
     f"{conv_context}"
     f"Current system state (read-only):\\n{system_context}\\n\\n"
-    "Give a concise, conversational diagnosis. Flag anything abnormal. "
+    "Give a concise, conversational diagnosis. You MUST reference specific command outputs you reviewed "
+    "and cite exact values you found (temps, percentages, error messages, etc). "
+    "Do NOT just say 'I ran a check' — list what each command showed. "
+    "Flag anything abnormal with the exact values. "
     "If this is a follow-up, reference previous context naturally."
 )
 
-ai_text, used_model = call_gemini(gemini_prompt, models_to_try)
+ai_text, used_model = call_gemini(gemini_prompt, models_to_try, max_tokens=800)
 
 if not ai_text:
     print("FAILURE: All Gemini models failed or unavailable.")
@@ -1113,7 +1116,14 @@ conversation["messages"].append({"role": "assistant", "text": ai_text})
 conversation["last_activity"] = time.time()
 save_conversation(conversation)
 
-print(f"**AI Debug** [{datetime.now().strftime('%H:%M')}] model: {used_model}\\n{ai_text}")
+# Build compact command output for the user
+cmd_lines = []
+for cmd_label, cmd_output in collected.items():
+    short = cmd_output[:150].replace("\\n", " | ")
+    cmd_lines.append(f"  {cmd_label}: {short}")
+cmd_summary = "\\n".join(cmd_lines)
+
+print(f"**AI Debug** [{datetime.now().strftime('%H:%M')}] model: {used_model}\\n{ai_text}\\n\\n**Commands reviewed:**\\n{cmd_summary}")
 `,
   },
   {
