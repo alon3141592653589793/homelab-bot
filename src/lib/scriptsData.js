@@ -1207,7 +1207,7 @@ else:
     id: "restart",
     filename: "restart.py",
     path: "~/secure-pi-bot/scripts/restart.py",
-    description: "Logs then reboots via sudo. Requires sudoers rule: alon ALL=(root) NOPASSWD: /sbin/shutdown",
+    description: "Logs then reboots via systemctl (polkit rule grants permission, no sudo). Requires /etc/polkit-1/rules.d/49-pi-bot.rules.",
     tags: ["reboot"],
     code: `import subprocess, os, json
 from datetime import datetime
@@ -1217,10 +1217,8 @@ LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
 print("Flushing logs...")
 subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
 
-# Try sudo first (needs NOPASSWD sudoers rule), fall back to plain shutdown
-result = subprocess.run(["sudo", "-n", "/sbin/shutdown", "-r", "now"], capture_output=True, text=True, timeout=10)
-if result.returncode != 0:
-    result = subprocess.run(["/sbin/shutdown", "-r", "now"], capture_output=True, text=True, timeout=10)
+# Use systemctl reboot — goes through polkit (no sudo, no password prompt)
+result = subprocess.run(["systemctl", "reboot"], capture_output=True, text=True, timeout=10)
 if result.returncode != 0:
     err = result.stderr.strip() or result.stdout.strip() or "unknown error"
     print(f"FAILED to reboot: {err}")
@@ -1245,7 +1243,7 @@ else:
     id: "shutdown",
     filename: "shutdown.py",
     path: "~/secure-pi-bot/scripts/shutdown.py",
-    description: "Logs then powers off via sudo. Requires sudoers rule: alon ALL=(root) NOPASSWD: /sbin/shutdown",
+    description: "Logs then powers off via systemctl (polkit rule grants permission, no sudo). Requires /etc/polkit-1/rules.d/49-pi-bot.rules.",
     tags: ["shutdown"],
     code: `import subprocess, os, json
 from datetime import datetime
@@ -1255,11 +1253,8 @@ LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
 print("Flushing logs...")
 subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
 
-# Try sudo first (needs NOPASSWD sudoers rule), fall back to plain shutdown
-result = subprocess.run(["sudo", "-n", "/sbin/shutdown", "-h", "now"], capture_output=True, text=True, timeout=10)
-if result.returncode != 0:
-    result = subprocess.run(["/sbin/shutdown", "-h", "now"], capture_output=True, text=True, timeout=10)
-if result.returncode != 0:
+# Use systemctl poweroff — goes through polkit (no sudo, no password prompt)
+result = subprocess.run(["systemctl", "poweroff"], capture_output=True, text=True, timeout=10)
     err = result.stderr.strip() or result.stdout.strip() or "unknown error"
     print(f"FAILED to power off: {err}")
     try:
@@ -1580,11 +1575,23 @@ sudo udevadm trigger
 # After this, set_profile_restricted.py and set_profile_unlimited.py need NO sudo at all.
 
 # ============================================================
-# SUDOERS — allow alon to reboot/shutdown without password prompt
+# POLKIT RULE — allow alon to reboot/poweroff without sudo
 # ============================================================
-# This lets /restart, /reboot, and /shutdown work from the Discord bot:
-echo 'alon ALL=(root) NOPASSWD: /sbin/shutdown' | sudo tee /etc/sudoers.d/pi-bot-shutdown
-sudo chmod 440 /etc/sudoers.d/pi-bot-shutdown
+# This lets /restart, /reboot, and /shutdown work from the Discord bot
+# without sudo or any password prompt. systemctl reboot/poweroff go
+# through polkit (same mechanism desktop environments use).
+sudo tee /etc/polkit-1/rules.d/49-pi-bot.rules << 'POLKIT'
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.login1.reboot" ||
+         action.id == "org.freedesktop.login1.power-off" ||
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.power-off-multiple-sessions") &&
+        subject.user == "alon") {
+        return polkit.Result.YES;
+    }
+});
+POLKIT
+sudo systemctl restart polkit
 
 # ============================================================
 # DIRECTORIES + LOGGING ENABLE
@@ -1618,6 +1625,7 @@ crontab -l
 #   - Gemini API key moved to ~/.secrets/gemini_key (chmod 600)
 #   - No secrets in .env except Discord token
 #   - udev rule eliminates cpufreq sudo
+#   - Polkit rule replaces sudoers for reboot/shutdown (no sudo at all)
 #   - Thermal alert cooldown (5 min) prevents spam flooding
 #
 # SD card writes:
