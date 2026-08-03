@@ -1059,17 +1059,47 @@ if conversation["messages"] and (now - conversation.get("last_activity", 0)) > S
         print(f"📝 **Conversation Summary** [{datetime.now().strftime('%H:%M')}]\\n{summary}\\n\\n--- New conversation ---\\n\\n")
     conversation = {"messages": [], "last_activity": 0}
 
-# === Collect system state (read-only whitelist) ===
+# === READ-ONLY WHITELIST — no sudo, no writes, no shell=True ===
+# The AI NEVER decides what commands run. This list is hardcoded in Python.
+# subprocess.run() with a list (not a string) makes shell injection impossible.
+# The AI only receives the TEXT OUTPUT of these commands — it cannot execute anything.
+# All commands are read-only: query, list, cat, measure, show. None modify the system.
 SAFE_COMMANDS = [
+    # --- Service health ---
+    ["systemctl", "is-system-running"],
     ["systemctl", "list-units", "--state=failed", "--no-legend"],
+    ["systemctl", "list-units", "--type=service", "--state=running", "--no-legend"],
+    ["systemctl", "list-timers", "--all", "--no-legend"],
+    # --- Logs & kernel messages ---
     ["journalctl", "-p", "err", "-n", "20", "--no-pager"],
-    ["df", "-h", "--output=source,size,used,avail,pcent,target"],
-    ["free", "-h"],
-    ["uptime"],
+    ["dmesg", "-T", "--level=err,warn", "-n", "15"],
+    # --- CPU & hardware ---
     ["vcgencmd", "measure_temp"],
     ["vcgencmd", "get_throttled"],
+    ["vcgencmd", "measure_clock", "arm"],
+    ["vcgencmd", "measure_clock", "core"],
+    ["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"],
+    ["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"],
+    ["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"],
+    # --- Memory & disk ---
+    ["free", "-h"],
+    ["df", "-h", "--output=source,size,used,avail,pcent,target"],
+    ["cat", "/proc/loadavg"],
+    # --- Processes ---
     ["ps", "-eo", "pid,comm,%cpu,%mem", "--sort=-%cpu", "--no-header"],
-    ["dmesg", "-T", "--level=err,warn", "-n", "15"],
+    # --- Network ---
+    ["ip", "addr", "show"],
+    ["ip", "route", "show"],
+    ["ss", "-tln"],
+    # --- System info ---
+    ["uname", "-a"],
+    ["uptime"],
+    # --- Cron & schedules ---
+    ["crontab", "-l"],
+    # --- Bot-specific state ---
+    ["ls", "-la", "/dev/shm/pi-bot/"],
+    ["wc", "-l", "/dev/shm/pi-bot/system_log.jsonl", "/dev/shm/pi-bot/fan_events.jsonl"],
+    ["du", "-sh", "/home/alon/secure-pi-bot/logs/"],
 ]
 
 collected = {}
