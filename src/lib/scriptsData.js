@@ -3,11 +3,12 @@ const scripts = [
     id: "main",
     filename: "main.py",
     path: "~/secure-pi-bot/main.py",
-    description: "Bot entry point. Handles Discord events, thermal monitoring, presence sync.",
+    description: "Bot entry point. Thermal monitoring (60s), failed services alerts (60s), presence sync (240s).",
     tags: ["discord", "bot", "listener"],
     code: `import os
 import sys
 import json
+import subprocess
 from dotenv import load_dotenv
 import discord
 from discord.ext import tasks
@@ -68,26 +69,67 @@ async def sync_bot_presence():
 
 # Track last alert time to avoid spam (cooldown 5 min)
 _last_alert_ts = 0.0
+ALERTED_SVC_FILE = "/dev/shm/pi-bot/.alerted_services"
 
 @tasks.loop(seconds=60)
 async def passive_thermal_monitor():
     global _last_alert_ts
+    await client.wait_until_ready()
+    
+    # --- Temperature check (with 5-min cooldown) ---
     import time
     temp = get_core_temp()
-    if temp < ALERT_THRESHOLD:
-        return
-    now = time.monotonic()
-    if now - _last_alert_ts < 300:
-        return  # cooldown: don't spam
-    _last_alert_ts = now
-    channel = client.get_channel(ALERT_CHANNEL_ID)
-    if channel:
-        tag = "[TEST INTERCEPT]" if IS_TEST_MODE else "[THERMAL WARNING]"
-        await channel.send(
-            f"{tag} Core temp breached threshold!\\n"
-            f"Current: {temp:.1f}C (Threshold: {ALERT_THRESHOLD:.1f}C)\\n"
-            f"Run /cooldown to reduce heat."
+    if temp >= ALERT_THRESHOLD:
+        now = time.monotonic()
+        if now - _last_alert_ts >= 300:
+            _last_alert_ts = now
+            ch = client.get_channel(ALERT_CHANNEL_ID)
+            if ch:
+                tag = "[TEST INTERCEPT]" if IS_TEST_MODE else "[THERMAL WARNING]"
+                await ch.send(
+                    f"{tag} Core temp breached threshold!\\n"
+                    f"Current: {temp:.1f}C (Threshold: {ALERT_THRESHOLD:.1f}C)\\n"
+                    f"Run /cooldown to reduce heat."
+                )
+    
+    # --- Failed services check (alerts on NEW failures + recoveries) ---
+    current_failed = set()
+    try:
+        r = subprocess.run(
+            ["systemctl", "list-units", "--state=failed", "--no-legend", "--plain"],
+            capture_output=True, text=True, timeout=5
         )
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            if parts and "clamav" not in parts[0]:
+                current_failed.add(parts[0])
+    except Exception:
+        pass
+    
+    prev_failed = set()
+    try:
+        with open(ALERTED_SVC_FILE) as f:
+            prev_failed = set(json.load(f))
+    except (OSError, json.JSONDecodeError):
+        pass
+    
+    new_failed = current_failed - prev_failed
+    recovered = prev_failed - current_failed
+    
+    ch = client.get_channel(ALERT_CHANNEL_ID)
+    if ch:
+        if new_failed:
+            svc_list = "\\n".join(f"  | {s}" for s in sorted(new_failed))
+            await ch.send(f"**Service Alert** - {len(new_failed)} new failure(s):\\n{svc_list}")
+        if recovered:
+            svc_list = "\\n".join(f"  | {s}" for s in sorted(recovered))
+            await ch.send(f"**Service Recovered** - {len(recovered)} service(s) back online:\\n{svc_list}")
+    
+    try:
+        with open(ALERTED_SVC_FILE, "w") as f:
+            json.dump(sorted(current_failed), f)
+    except OSError:
+        pass
 
 @client.event
 async def on_ready():
@@ -157,6 +199,17 @@ async def handle_reactive_command(client, message):
     elif content == "/weeklyreport":
         await run_script(message, "weekly_report.py", "Generating weekly report...")
 
+    elif content == "/weeklyreport stop":
+        open("/home/alon/secure-pi-bot/.weekly_report_disabled", "w").close()
+        await message.channel.send("Weekly report disabled. Scheduled reports will not run.")
+
+    elif content == "/weeklyreport start":
+        try:
+            os.remove("/home/alon/secure-pi-bot/.weekly_report_disabled")
+        except FileNotFoundError:
+            pass
+        await message.channel.send("Weekly report enabled. Next scheduled report will run normally.")
+
     elif content == "/logging start":
         open(LOGGING_FLAG, "w").close()
         await message.channel.send("Logging enabled.")
@@ -196,7 +249,9 @@ async def handle_reactive_command(client, message):
             "/restart              - Reboot Pi (requires confirmation)\\n"
             "/shutdown             - Power off Pi (requires confirmation)\\n"
             "/fanreport            - Show fan activation log\\n"
-            "/weeklyreport         - Post weekly summary\\n"
+            "/weeklyreport         - Post weekly summary now\\n"
+            "/weeklyreport stop    - Disable scheduled weekly reports\\n"
+            "/weeklyreport start   - Re-enable scheduled weekly reports\\n"
             "/logging start|stop   - Toggle system logger\\n"
             "/profile              - Show CPU performance profile\\n"
             "/setprofile restricted|unlimited  - Switch CPU profile\\n"
@@ -267,7 +322,7 @@ async def confirm_and_run(client, message, script_name, action_name, description
     id: "status",
     filename: "status.py",
     path: "~/secure-pi-bot/scripts/status.py",
-    description: "System metrics: temp, CPU, GPU clock, RAM, RAM speed, core voltage, last upgrade. Reads sysfs directly where possible.",
+    description: "System metrics: temp, CPU, GPU, RAM, last upgrade. No voltage. 0.5s CPU interval to reduce power spikes.",
     tags: ["status", "hardware", "psutil"],
     code: `import sys
 import subprocess
@@ -292,12 +347,12 @@ def vcgencmd(arg):
     except Exception:
         return None
 
-# Temperature — sysfs is faster than vcgencmd
+# Temperature — sysfs, no subprocess
 raw_temp = sysfs("/sys/class/thermal/thermal_zone0/temp")
 temp = f"{int(raw_temp) / 1000:.1f}C" if raw_temp else "Unknown"
 
-# CPU
-cpu_pct = psutil.cpu_percent(interval=1)
+# CPU — 0.5s interval (was 1s) to reduce power spike from measurement itself
+cpu_pct = psutil.cpu_percent(interval=0.5)
 freq = psutil.cpu_freq()
 cpu_ghz = f"{freq.current / 1000:.2f} GHz" if freq else "Unknown"
 
@@ -309,13 +364,13 @@ gpu_mhz = f"{int(gpu_raw.split('=')[1]) // 1_000_000} MHz" if gpu_raw else "Unkn
 vm = psutil.virtual_memory()
 ram_str = f"{vm.used // (1024*1024)} MB / {vm.total // (1024*1024)} MB ({vm.percent}%)"
 
-# RAM speed — try sdram_p (data bus, non-zero on Pi 4), fallback to sdram_c
+# RAM speed — sdram_p (data bus). If 0, the clock read failed — show N/A
 sdram_raw = vcgencmd("measure_clock sdram_p") or vcgencmd("measure_clock sdram_c")
-ram_speed = f"{int(sdram_raw.split('=')[1]) // 1_000_000} MHz" if sdram_raw else "Unknown"
-
-# Core voltage
-volt_raw = vcgencmd("measure_volts core")
-voltage = volt_raw.split("=")[1] if volt_raw else "Unknown"
+if sdram_raw:
+    sdram_mhz = int(sdram_raw.split("=")[1]) // 1_000_000
+    ram_speed = f"{sdram_mhz} MHz" if sdram_mhz > 0 else "N/A"
+else:
+    ram_speed = "N/A"
 
 # Last upgrade
 last_upgrade = sysfs("/home/alon/.secrets/last_upgrade.txt") or "Unknown"
@@ -323,9 +378,8 @@ last_upgrade = sysfs("/home/alon/.secrets/last_upgrade.txt") or "Unknown"
 print(
     f"**Pi Status**\\n"
     f"Temp: {temp} | CPU: {cpu_pct}% @ {cpu_ghz}\\n"
-    f"GPU: {gpu_mhz} | Voltage: {voltage}\\n"
-    f"RAM: {ram_str}\\n"
-    f"RAM Speed: {ram_speed}\\n"
+    f"GPU: {gpu_mhz}\\n"
+    f"RAM: {ram_str} | RAM Speed: {ram_speed}\\n"
     f"Last Upgrade: {last_upgrade}"
 )
 `,
@@ -334,7 +388,7 @@ print(
     id: "fan-logger",
     filename: "fan_logger.py",
     path: "~/secure-pi-bot/scripts/fan_logger.py",
-    description: "Logs fan ON/OFF transitions every minute to /dev/shm (RAM). No SD writes. Flushed by compress_logs.py before reboot. Caps log at 2000 lines to bound RAM use.",
+    description: "Logs fan ON/OFF transitions to /dev/shm (RAM). 60s boot delay. No SD writes. Flushed by compress_logs.py before reboot. Caps at 2000 lines.",
     tags: ["fan", "logging", "thermal"],
     code: `import os
 import json
@@ -344,6 +398,15 @@ PIBOT_DIR = "/dev/shm/pi-bot"
 RAM_LOG = f"{PIBOT_DIR}/fan_events.jsonl"
 STATE_FILE = f"{PIBOT_DIR}/fan_state.txt"
 MAX_LINES = 2000
+
+# Wait 60s after boot — fan behavior is erratic during early boot
+try:
+    with open("/proc/uptime") as f:
+        uptime = float(f.read().split()[0])
+    if uptime < 60:
+        raise SystemExit(0)
+except OSError:
+    pass
 
 # If the RAM dir doesn't exist yet the bot hasn't started — skip silently
 if not os.path.isdir(PIBOT_DIR):
@@ -483,18 +546,18 @@ print("\\n".join(lines))
     id: "system-logger",
     filename: "system_logger.py",
     path: "~/secure-pi-bot/scripts/system_logger.py",
-    description: "10-min cron logger. Writes to /dev/shm (RAM). Skips if .logging_enabled absent. Reads last line efficiently via seek. Caps at 1500 lines.",
-    tags: ["logging", "temperature", "ram", "services"],
+    description: "10-min cron logger. Temp to RAM. Warns on 90%+ RAM and disk I/O spikes. No continuous RAM logging. Failed services handled by bot.",
+    tags: ["logging", "temperature", "warnings"],
     code: `import os
 import sys
 import json
-import subprocess
 from datetime import datetime
 
 ENABLED_FLAG = "/home/alon/secure-pi-bot/.logging_enabled"
 PIBOT_DIR = "/dev/shm/pi-bot"
 RAM_LOG = f"{PIBOT_DIR}/system_log.jsonl"
-MAX_LINES = 1500  # ~10 days at 10-min intervals
+DISK_IO_STATE = f"{PIBOT_DIR}/.disk_io_state"
+MAX_LINES = 1500
 
 if not os.path.exists(ENABLED_FLAG):
     sys.exit(0)
@@ -508,41 +571,47 @@ except ImportError:
 
 ts = datetime.now().isoformat(timespec="seconds")
 
-# Temp — direct sysfs read, no subprocess
+# Temp — direct sysfs read
 try:
     with open("/sys/class/thermal/thermal_zone0/temp") as f:
         temp_c = round(int(f.read()) / 1000.0, 1)
 except OSError:
     temp_c = None
 
-# RAM
+# RAM — only flag at 90%+ (not logged every tick)
 vm = psutil.virtual_memory()
-ram_pct = round(vm.percent, 1)
+ram_warning = vm.percent >= 90.0
 
-# Failed services — fast, read-only, no sudo needed
-failed = []
-try:
-    r = subprocess.run(
-        ["systemctl", "list-units", "--state=failed", "--no-legend", "--plain"],
-        capture_output=True, text=True, timeout=5
-    )
-    for line in r.stdout.splitlines():
-        parts = line.split()
-        if parts and "clamav" not in parts[0]:
-            failed.append(parts[0])
-except Exception:
-    pass
+# Disk I/O spike — compare with last reading (>5 MB/s avg = spike)
+disk_warning = False
+current_io = psutil.disk_io_counters()
+if current_io:
+    if os.path.exists(DISK_IO_STATE):
+        try:
+            with open(DISK_IO_STATE) as f:
+                prev = json.load(f)
+            delta = (current_io.read_bytes + current_io.write_bytes) - (prev["read_bytes"] + prev["write_bytes"])
+            elapsed = (datetime.now() - datetime.fromisoformat(prev["ts"])).total_seconds()
+            if elapsed > 0 and (delta / elapsed) / (1024 * 1024) > 5:
+                disk_warning = True
+        except Exception:
+            pass
+    with open(DISK_IO_STATE, "w") as f:
+        json.dump({"read_bytes": current_io.read_bytes, "write_bytes": current_io.write_bytes, "ts": ts}, f)
 
-entry = {"ts": ts, "temp_c": temp_c, "ram_pct": ram_pct}
-if failed:
-    entry["failed"] = failed
+# Build entry — temp + warnings only (no continuous RAM)
+entry = {"ts": ts, "temp_c": temp_c}
+if ram_warning:
+    entry["ram_warning"] = True
+    entry["ram_pct"] = round(vm.percent, 1)
+if disk_warning:
+    entry["disk_spike"] = True
 
-# Read last line only — seek from end for efficiency
+# Temp spike detection — seek to end for last line
 last_temp = None
 if os.path.exists(RAM_LOG):
     try:
         with open(RAM_LOG, "rb") as f:
-            # Seek to near end, read last non-empty line
             f.seek(0, 2)
             size = f.tell()
             f.seek(max(0, size - 512))
@@ -694,7 +763,7 @@ print(f"Logs flushed: {fan_count} fan events | system log {in_c} -> {out_c} bloc
     id: "weekly-report",
     filename: "weekly_report.py",
     path: "~/secure-pi-bot/scripts/weekly_report.py",
-    description: "Weekly report from system_log and fan_log. Saves up to 3 rotating reports. Posts to channel 1524756593651224706 via bot token.",
+    description: "Weekly report: temp, fan. No RAM or failed services (handled by bot). Can be disabled via /weeklyreport stop.",
     tags: ["report", "discord", "weekly"],
     code: `import os
 import sys
@@ -713,6 +782,10 @@ REPORTS_DIR = f"{BOT_DIR}/logs/weekly_reports"
 REPORT_CHANNEL_ID = 1524756593651224706
 
 os.makedirs(REPORTS_DIR, exist_ok=True)
+
+if os.path.exists(f"{BOT_DIR}/.weekly_report_disabled"):
+    print("Weekly report disabled. Use /weeklyreport start to re-enable.")
+    sys.exit(0)
 
 from dotenv import load_dotenv
 load_dotenv(f"{BOT_DIR}/.env")
@@ -772,9 +845,6 @@ fan_entries = sorted(
 temps = [e.get("temp_c") or e.get("temp_avg_c") for e in sys_entries]
 temps = [t for t in temps if t is not None]
 spikes = [e for e in sys_entries if e.get("spike") or e.get("spike_flag")]
-rams = [e.get("ram_pct") or e.get("ram_avg_pct") for e in sys_entries]
-rams = [r for r in rams if r is not None]
-all_failed = sorted({f for e in sys_entries for f in e.get("failed", [])})
 
 # Fan sessions
 fan_sessions = []
@@ -815,11 +885,7 @@ if spikes:
     )
     lines.append(f"Spikes ({len(spikes)}): {sp}")
 
-if rams:
-    lines.append(f"RAM (7d): Avg {sum(rams)/len(rams):.1f}% | Max {max(rams):.1f}%")
-
 lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total")
-lines.append(f"Failed services: {', '.join(all_failed)}" if all_failed else "Services: All healthy")
 
 report = "\\n".join(lines)
 
@@ -1002,28 +1068,67 @@ else:
     id: "restart",
     filename: "restart.py",
     path: "~/secure-pi-bot/scripts/restart.py",
-    description: "Compresses logs then reboots. systemd-logind handles reboot without sudo if user is in 'sudo' group sudoers entry.",
+    description: "Compresses logs then reboots. Captures and logs shutdown errors to /dev/shm. Returns actual error to Discord if it fails.",
     tags: ["reboot"],
-    code: `import subprocess, os
+    code: `import subprocess, os, json
+from datetime import datetime
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
+
 print("Flushing logs...")
 subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
-print("Rebooting...")
-subprocess.run(["/sbin/shutdown", "-r", "now"])
+result = subprocess.run(["/sbin/shutdown", "-r", "now"], capture_output=True, text=True, timeout=10)
+if result.returncode != 0:
+    err = result.stderr.strip() or result.stdout.strip() or "unknown error"
+    print(f"FAILED to reboot: {err}")
+    # Log to RAM
+    try:
+        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "cmd": "restart", "status": "failed", "error": err}) + "\\n")
+    except OSError:
+        pass
+else:
+    print("Rebooting...")
+    try:
+        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "cmd": "restart", "status": "ok"}) + "\\n")
+    except OSError:
+        pass
 `,
   },
   {
     id: "shutdown",
     filename: "shutdown.py",
     path: "~/secure-pi-bot/scripts/shutdown.py",
-    description: "Compresses logs then powers off.",
+    description: "Compresses logs then powers off. Captures and logs shutdown errors to /dev/shm. Returns actual error to Discord if it fails.",
     tags: ["shutdown"],
-    code: `import subprocess, os
+    code: `import subprocess, os, json
+from datetime import datetime
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
+
 print("Flushing logs...")
 subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
-print("Powering off...")
-subprocess.run(["/sbin/shutdown", "-h", "now"])
+result = subprocess.run(["/sbin/shutdown", "-h", "now"], capture_output=True, text=True, timeout=10)
+if result.returncode != 0:
+    err = result.stderr.strip() or result.stdout.strip() or "unknown error"
+    print(f"FAILED to power off: {err}")
+    try:
+        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "cmd": "shutdown", "status": "failed", "error": err}) + "\\n")
+    except OSError:
+        pass
+else:
+    print("Powering off...")
+    try:
+        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "cmd": "shutdown", "status": "ok"}) + "\\n")
+    except OSError:
+        pass
 `,
   },
   {
