@@ -237,7 +237,7 @@ async def handle_reactive_command(client, message):
     elif raw.lower().startswith("/aidebug "):
         rest = raw[9:].strip()
         if rest:
-            await run_script(message, "ai_debug.py", f"AI diagnostic: {rest[:60]}...", args=rest.split(" ", 1) if rest.startswith("gemini-") else [rest])
+            await run_script(message, "ai_debug.py", "Thinking...", args=rest.split(" ", 1) if rest.startswith("gemini-") else [rest])
         else:
             await message.channel.send("Usage: /aidebug <question>\\nOptional: /aidebug gemini-3.5-flash <question>")
 
@@ -256,7 +256,7 @@ async def handle_reactive_command(client, message):
             "/profile              - Show CPU performance profile\\n"
             "/setprofile restricted|unlimited  - Switch CPU profile\\n"
             "/fastfetch            - Run fastfetch\\n"
-            "/aidebug <question>   - AI reads Pi state and diagnoses\\n"
+            "/aidebug <question>   - Conversational AI diagnostic\\n"
             "/help                 - This message"
         )
 `,
@@ -322,10 +322,11 @@ async def confirm_and_run(client, message, script_name, action_name, description
     id: "status",
     filename: "status.py",
     path: "~/secure-pi-bot/scripts/status.py",
-    description: "System metrics: temp, CPU, GPU, RAM, last upgrade. No voltage. 0.5s CPU interval to reduce power spikes.",
+    description: "System metrics: temp, CPU, GPU, RAM, profile, IP, uptime, current time. No voltage. 0.5s CPU interval.",
     tags: ["status", "hardware", "psutil"],
     code: `import sys
 import subprocess
+from datetime import datetime
 
 try:
     import psutil
@@ -347,11 +348,11 @@ def vcgencmd(arg):
     except Exception:
         return None
 
-# Temperature — sysfs, no subprocess
+# Temperature
 raw_temp = sysfs("/sys/class/thermal/thermal_zone0/temp")
 temp = f"{int(raw_temp) / 1000:.1f}C" if raw_temp else "Unknown"
 
-# CPU — 0.5s interval (was 1s) to reduce power spike from measurement itself
+# CPU — 0.5s interval
 cpu_pct = psutil.cpu_percent(interval=0.5)
 freq = psutil.cpu_freq()
 cpu_ghz = f"{freq.current / 1000:.2f} GHz" if freq else "Unknown"
@@ -364,28 +365,63 @@ gpu_mhz = f"{int(gpu_raw.split('=')[1]) // 1_000_000} MHz" if gpu_raw else "Unkn
 vm = psutil.virtual_memory()
 ram_str = f"{vm.used // (1024*1024)} MB / {vm.total // (1024*1024)} MB ({vm.percent}%)"
 
-# RAM speed — try measured clock, then configured frequency
+# RAM speed — vcgencmd can't measure SDRAM on Pi 4 (returns 0)
+# Try get_config, then detect by Pi model from device tree
 ram_speed = "N/A"
-for cmd, divisor in [("measure_clock sdram_p", 1_000_000), ("measure_clock sdram_c", 1_000_000), ("get_config sdram_freq", 1)]:
-    raw = vcgencmd(cmd)
-    if not raw:
-        continue
+config_raw = vcgencmd("get_config sdram_freq")
+if config_raw:
     try:
-        val = int(raw.split("=")[1])
+        val = int(config_raw.split("=")[1])
         if val > 0:
-            ram_speed = f"{val // divisor} MHz"
-            break
+            ram_speed = f"{val} MHz"
     except (ValueError, IndexError):
-        continue
+        pass
+if ram_speed == "N/A":
+    model_raw = (sysfs("/proc/device-tree/model") or "").split(chr(0))[0].strip()
+    if "Pi 5" in model_raw:
+        ram_speed = "4267 MHz"
+    elif "Pi 4" in model_raw:
+        ram_speed = "3200 MHz"
+    elif "Pi Zero 2" in model_raw or "Pi 3" in model_raw:
+        ram_speed = "450 MHz"
+    elif "Pi Zero" in model_raw:
+        ram_speed = "400 MHz"
+
+# Profile
+try:
+    with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq") as f:
+        max_khz = int(f.read().strip())
+    profile = "Restricted" if max_khz <= 600000 else "Unlimited"
+except OSError:
+    profile = "Unknown"
+
+# IP
+try:
+    r = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=3)
+    ip = r.stdout.strip().split()[0] if r.stdout.strip() else "Unknown"
+except Exception:
+    ip = "Unknown"
+
+# Uptime
+try:
+    boot_dt = datetime.fromtimestamp(psutil.boot_time())
+    d = datetime.now() - boot_dt
+    uptime = f"{d.days}d {d.seconds//3600}h {(d.seconds%3600)//60}m"
+except Exception:
+    uptime = "Unknown"
+
+# Current time
+now_str = datetime.now().strftime("%H:%M:%S")
 
 # Last upgrade
 last_upgrade = sysfs("/home/alon/.secrets/last_upgrade.txt") or "Unknown"
 
 print(
-    f"**Pi Status**\\n"
+    f"**Pi Status** — {now_str}\\n"
     f"Temp: {temp} | CPU: {cpu_pct}% {cpu_ghz}\\n"
-    f"GPU: {gpu_mhz}\\n"
+    f"GPU: {gpu_mhz} | Profile: {profile}\\n"
     f"RAM: {ram_str} | RAM Speed: {ram_speed}\\n"
+    f"IP: {ip} | Uptime: {uptime}\\n"
     f"Last Upgrade: {last_upgrade}"
 )
 `,
@@ -911,21 +947,23 @@ print("Weekly report sent.")
     id: "ai-debug",
     filename: "ai_debug.py",
     path: "~/secure-pi-bot/scripts/ai_debug.py",
-    description: "Read-only AI diagnostic. Tries models in priority order until one works. Pass custom model as first arg before question, or leave empty for auto. Rate limited 1/5min.",
-    tags: ["ai", "debug", "gemini", "diagnostic"],
+    description: "Conversational AI diagnostic. Remembers context within session. After 20min silence, summarizes conversation to log. Reads Pi state via hardcoded read-only commands.",
+    tags: ["ai", "debug", "gemini", "diagnostic", "conversation"],
     code: `import os
 import sys
 import time
+import json
 import subprocess
 import requests
 from datetime import datetime
 
 BOT_DIR = "/home/alon/secure-pi-bot"
-REPORT_CHANNEL_ID = 1524756593651224706
 RATE_LIMIT_FILE = "/dev/shm/pi-bot/.ai_rate"
-RATE_LIMIT_SECS = 300
+RATE_LIMIT_SECS = 10
+CONV_FILE = "/dev/shm/pi-bot/.ai_conversation.json"
+SUMMARY_LOG = f"{BOT_DIR}/logs/ai_summary_log.jsonl"
+SILENCE_THRESHOLD = 20 * 60
 
-# Model priority chain — tried in order until one succeeds
 MODEL_PRIORITY = [
     "gemini-3.5-flash",
     "gemini-3.1-flash-lite",
@@ -937,7 +975,6 @@ MODEL_PRIORITY = [
 
 from dotenv import load_dotenv
 load_dotenv(f"{BOT_DIR}/.env")
-BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 try:
     with open("/home/alon/.secrets/gemini_key") as f:
@@ -946,38 +983,83 @@ except OSError:
     print("FAILURE: /home/alon/.secrets/gemini_key not found.")
     sys.exit(1)
 
-if not BOT_TOKEN:
-    print("FAILURE: DISCORD_BOT_TOKEN not set in .env")
-    sys.exit(1)
-
-# Rate limit in RAM
-now = time.time()
 os.makedirs("/dev/shm/pi-bot", exist_ok=True)
+
+# Minimal rate limit — prevents accidental double-fire only
+now = time.time()
 try:
     with open(RATE_LIMIT_FILE) as f:
         last = float(f.read().strip() or "0")
     if now - last < RATE_LIMIT_SECS:
-        print(f"Rate limited. Wait {int(RATE_LIMIT_SECS - (now - last))}s.")
+        print(f"Wait {int(RATE_LIMIT_SECS - (now - last))}s between commands.")
         sys.exit(0)
 except OSError:
     pass
 with open(RATE_LIMIT_FILE, "w") as f:
     f.write(str(now))
 
-# Parse args: optional first arg can be a custom model name (contains "gemini")
+# Parse args
 args = sys.argv[1:]
 custom_model = None
 if args and "gemini" in args[0].lower():
     custom_model = args[0]
     args = args[1:]
 prompt = " ".join(args).strip() or "General health check"
-
 models_to_try = [custom_model] if custom_model else MODEL_PRIORITY
 
-# === READ-ONLY WHITELIST — no sudo, no writes, no shell=True ===
-# The AI NEVER decides what commands run. This list is hardcoded in Python.
-# subprocess.run() with a list (not a string) makes shell injection impossible.
-# The AI only receives the TEXT OUTPUT of these commands — it cannot execute anything.
+def call_gemini(prompt_text, models, max_tokens=350):
+    payload = {
+        "contents": [{"parts": [{"text": prompt_text}]}],
+        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}
+    }
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
+        try:
+            resp = requests.post(url, json=payload, timeout=20)
+            if resp.status_code in (429, 503):
+                continue
+            resp.raise_for_status()
+            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            return text, model
+        except Exception:
+            continue
+    return None, None
+
+# === Conversation management ===
+def load_conversation():
+    try:
+        with open(CONV_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {"messages": [], "last_activity": 0}
+
+def save_conversation(conv):
+    with open(CONV_FILE, "w") as f:
+        json.dump(conv, f)
+
+conversation = load_conversation()
+
+# If 20+ min of silence, summarize and clear previous conversation
+if conversation["messages"] and (now - conversation.get("last_activity", 0)) > SILENCE_THRESHOLD:
+    conv_text = ""
+    for msg in conversation["messages"]:
+        role = "User" if msg["role"] == "user" else "AI"
+        conv_text += f"{role}: {msg['text'][:300]}\\n"
+    summary_prompt = (
+        "Summarize this Raspberry Pi diagnostic conversation. "
+        "Include key findings, issues found, and recommendations. Max 600 chars.\\n\\n"
+        f"{conv_text}"
+    )
+    summary, _ = call_gemini(summary_prompt, MODEL_PRIORITY, max_tokens=200)
+    if summary:
+        os.makedirs(f"{BOT_DIR}/logs", exist_ok=True)
+        entry = {"ts": datetime.now().isoformat(timespec="seconds"), "summary": summary, "messages": len(conversation["messages"])}
+        with open(SUMMARY_LOG, "a") as f:
+            f.write(json.dumps(entry) + "\\n")
+        print(f"📝 **Conversation Summary** [{datetime.now().strftime('%H:%M')}]\\n{summary}\\n\\n--- New conversation ---\\n\\n")
+    conversation = {"messages": [], "last_activity": 0}
+
+# === Collect system state (read-only whitelist) ===
 SAFE_COMMANDS = [
     ["systemctl", "list-units", "--state=failed", "--no-legend"],
     ["journalctl", "-p", "err", "-n", "20", "--no-pager"],
@@ -986,7 +1068,6 @@ SAFE_COMMANDS = [
     ["uptime"],
     ["vcgencmd", "measure_temp"],
     ["vcgencmd", "get_throttled"],
-    ["vcgencmd", "measure_volts", "core"],
     ["ps", "-eo", "pid,comm,%cpu,%mem", "--sort=-%cpu", "--no-header"],
     ["dmesg", "-T", "--level=err,warn", "-n", "15"],
 ]
@@ -996,55 +1077,43 @@ for cmd in SAFE_COMMANDS:
     label = " ".join(cmd)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
-        out = (r.stdout or r.stderr or "(empty)").strip()
-        collected[label] = out[:500]
-    except subprocess.TimeoutExpired:
-        collected[label] = "(timed out)"
-    except FileNotFoundError:
-        collected[label] = "(not found)"
+        collected[label] = (r.stdout or r.stderr or "(empty)").strip()[:500]
     except Exception as e:
         collected[label] = f"(err: {e})"
 
-context = "\\n\\n".join(f"$ {k}\\n{v}" for k, v in collected.items())
+system_context = "\\n\\n".join(f"$ {k}\\n{v}" for k, v in collected.items())
+
+# Build prompt with conversation context
+conv_context = ""
+if conversation["messages"]:
+    conv_context = "Previous conversation:\\n"
+    for msg in conversation["messages"][-6:]:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        conv_context += f"{role}: {msg['text'][:300]}\\n"
+    conv_context += "\\n"
 
 gemini_prompt = (
-    f'Raspberry Pi diagnostic assistant. User asks: "{prompt}"\\n\\n'
-    f"System state (read-only):\\n{context}\\n\\n"
-    "Give a concise diagnosis. Flag anything abnormal. Max 1200 characters."
+    f"Raspberry Pi diagnostic assistant in a conversation. "
+    f'User asks: "{prompt}"\\n\\n'
+    f"{conv_context}"
+    f"Current system state (read-only):\\n{system_context}\\n\\n"
+    "Give a concise, conversational diagnosis. Flag anything abnormal. "
+    "If this is a follow-up, reference previous context naturally."
 )
 
-payload = {
-    "contents": [{"parts": [{"text": gemini_prompt}]}],
-    "generationConfig": {"maxOutputTokens": 350, "temperature": 0.2}
-}
-
-ai_text = None
-used_model = None
-for model in models_to_try:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
-    try:
-        resp = requests.post(url, json=payload, timeout=20)
-        if resp.status_code in (429, 503):
-            continue  # rate limited or overloaded — try next
-        resp.raise_for_status()
-        ai_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        used_model = model
-        break
-    except Exception:
-        continue
+ai_text, used_model = call_gemini(gemini_prompt, models_to_try)
 
 if not ai_text:
     print("FAILURE: All Gemini models failed or unavailable.")
     sys.exit(1)
 
-durl = f"https://discord.com/api/v10/channels/{REPORT_CHANNEL_ID}/messages"
-hdrs = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
-header = f"**AI Debug** [{datetime.now().strftime('%H:%M')}] model: \`{used_model}\` | {prompt[:60]}\\n\\n"
-msg = header + ai_text
-for chunk in [msg[i:i+1900] for i in range(0, len(msg), 1900)]:
-    requests.post(durl, json={"content": chunk}, headers=hdrs, timeout=10)
+# Save to conversation
+conversation["messages"].append({"role": "user", "text": prompt, "ts": datetime.now().isoformat()})
+conversation["messages"].append({"role": "assistant", "text": ai_text})
+conversation["last_activity"] = time.time()
+save_conversation(conversation)
 
-print(f"Posted using {used_model}.")
+print(f"**AI Debug** [{datetime.now().strftime('%H:%M')}] model: {used_model}\\n{ai_text}")
 `,
   },
   {
