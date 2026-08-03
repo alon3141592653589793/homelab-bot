@@ -8,6 +8,7 @@ const scripts = [
     code: `import os
 import sys
 import json
+import asyncio
 import subprocess
 from dotenv import load_dotenv
 import discord
@@ -121,6 +122,26 @@ async def passive_thermal_monitor():
         if new_failed:
             svc_list = "\\n".join(f"  | {s}" for s in sorted(new_failed))
             await ch.send(f"**Service Alert** - {len(new_failed)} new failure(s):\\n{svc_list}")
+            # Auto-run AI diagnosis for newly failed services
+            services_str = ", ".join(sorted(new_failed))
+            auto_prompt = f"Automated alert: service(s) {services_str} just failed. Review system state and diagnose what went wrong. Suggest fixes."
+            script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "ai_debug.py")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "python3", "-u", script_path, "--auto", auto_prompt,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+                output = stdout.decode().strip()
+                if output:
+                    if len(output) > 1900:
+                        output = output[:1897] + "..."
+                    await ch.send(output)
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                pass
         if recovered:
             svc_list = "\\n".join(f"  | {s}" for s in sorted(recovered))
             await ch.send(f"**Service Recovered** - {len(recovered)} service(s) back online:\\n{svc_list}")
@@ -985,27 +1006,30 @@ except OSError:
 
 os.makedirs("/dev/shm/pi-bot", exist_ok=True)
 
-# Minimal rate limit — prevents accidental double-fire only
-now = time.time()
-try:
-    with open(RATE_LIMIT_FILE) as f:
-        last = float(f.read().strip() or "0")
-    if now - last < RATE_LIMIT_SECS:
-        print(f"Wait {int(RATE_LIMIT_SECS - (now - last))}s between commands.")
-        sys.exit(0)
-except OSError:
-    pass
-with open(RATE_LIMIT_FILE, "w") as f:
-    f.write(str(now))
-
-# Parse args
+# Parse args — --auto skips rate limit (used by automated service alerts)
 args = sys.argv[1:]
+is_auto = "--auto" in args
+args = [a for a in args if a != "--auto"]
 custom_model = None
 if args and "gemini" in args[0].lower():
     custom_model = args[0]
     args = args[1:]
-prompt = " ".join(args).strip() or "General health check"
+prompt = " ".join(args).strip() or "Automatic service failure diagnosis"
 models_to_try = [custom_model] if custom_model else MODEL_PRIORITY
+
+# Minimal rate limit — prevents accidental double-fire only (skip for --auto)
+now = time.time()
+if not is_auto:
+    try:
+        with open(RATE_LIMIT_FILE) as f:
+            last = float(f.read().strip() or "0")
+        if now - last < RATE_LIMIT_SECS:
+            print(f"Wait {int(RATE_LIMIT_SECS - (now - last))}s between commands.")
+            sys.exit(0)
+    except OSError:
+        pass
+    with open(RATE_LIMIT_FILE, "w") as f:
+        f.write(str(now))
 
 def call_gemini(prompt_text, models, max_tokens=350):
     payload = {
