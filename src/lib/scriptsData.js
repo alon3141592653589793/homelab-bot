@@ -364,20 +364,26 @@ gpu_mhz = f"{int(gpu_raw.split('=')[1]) // 1_000_000} MHz" if gpu_raw else "Unkn
 vm = psutil.virtual_memory()
 ram_str = f"{vm.used // (1024*1024)} MB / {vm.total // (1024*1024)} MB ({vm.percent}%)"
 
-# RAM speed — sdram_p (data bus). If 0, the clock read failed — show N/A
-sdram_raw = vcgencmd("measure_clock sdram_p") or vcgencmd("measure_clock sdram_c")
-if sdram_raw:
-    sdram_mhz = int(sdram_raw.split("=")[1]) // 1_000_000
-    ram_speed = f"{sdram_mhz} MHz" if sdram_mhz > 0 else "N/A"
-else:
-    ram_speed = "N/A"
+# RAM speed — try measured clock, then configured frequency
+ram_speed = "N/A"
+for cmd, divisor in [("measure_clock sdram_p", 1_000_000), ("measure_clock sdram_c", 1_000_000), ("get_config sdram_freq", 1)]:
+    raw = vcgencmd(cmd)
+    if not raw:
+        continue
+    try:
+        val = int(raw.split("=")[1])
+        if val > 0:
+            ram_speed = f"{val // divisor} MHz"
+            break
+    except (ValueError, IndexError):
+        continue
 
 # Last upgrade
 last_upgrade = sysfs("/home/alon/.secrets/last_upgrade.txt") or "Unknown"
 
 print(
     f"**Pi Status**\\n"
-    f"Temp: {temp} | CPU: {cpu_pct}% @ {cpu_ghz}\\n"
+    f"Temp: {temp} | CPU: {cpu_pct}% {cpu_ghz}\\n"
     f"GPU: {gpu_mhz}\\n"
     f"RAM: {ram_str} | RAM Speed: {ram_speed}\\n"
     f"Last Upgrade: {last_upgrade}"
