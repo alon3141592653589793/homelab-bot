@@ -1543,10 +1543,15 @@ else
 fi
 wait_for_cool
 
-# 3. Security Audit — every night, throttled
-log "Security audit..."
-$NICE /usr/local/bin/pi-audit.sh >> "$LOG_FILE" 2>&1
-echo "Audit: COMPLETED (nightly)" >> "$QUEUE"
+# 3. Security Audit — once a week (Sunday), throttled
+if [ "$(date +%u)" = "7" ]; then
+    log "Security audit (weekly Sunday)..."
+    $NICE /usr/local/bin/pi-audit.sh >> "$LOG_FILE" 2>&1
+    echo "Audit: COMPLETED (weekly Sun)" >> "$QUEUE"
+else
+    log "Audit: skipped (weekly — runs Sunday)"
+    echo "Audit: SKIPPED (weekly Sun)" >> "$QUEUE"
+fi
 wait_for_cool
 
 # 4. Service Health
@@ -1576,7 +1581,7 @@ fi
     id: "pi-audit",
     filename: "pi-audit.sh",
     path: "/usr/local/bin/pi-audit.sh",
-    description: "Nightly security audit called by pi-maintenance.sh. Runs ClamAV + Rkhunter + Lynis under nice/ionice. NO apt upgrades or reboot (maintenance owns those). Aborts if .maintenance_disabled lock is set. Replaces the legacy pi-audit Go binary.",
+    description: "Weekly (Sunday) security audit called by pi-maintenance.sh. Runs ClamAV + Rkhunter under nice/ionice (Lynis disabled for now — re-enable in step 3). NO apt upgrades or reboot (maintenance owns those). Aborts if .maintenance_disabled lock is set. Replaces the legacy pi-audit Go binary.",
     tags: ["audit", "security", "bash", "maintenance"],
     code: `#!/bin/bash
 # Security audit — ClamAV + Rkhunter + Lynis, throttled under nice/ionice.
@@ -1614,16 +1619,16 @@ if [ -n "$RK" ]; then
   FOUND=1
 fi
 
-# 3. Lynis — surface warnings, skip pgrep noise
-LY=$(lynis audit system --quick 2>/dev/null | grep -i warning | grep -iv 'pgrep')
-if [ -n "$LY" ]; then
-  echo "[$(TS)] [!] CRITICAL: SYSTEM VULNERABILITY"
-  echo "$LY"
-  echo "CRITICAL: Vulnerabilities (Lynis)" >> "$QUEUE"
-  FOUND=1
-fi
+# 3. Lynis — DISABLED for now (re-enable by uncommenting the block below)
+#LY=$(lynis audit system --quick 2>/dev/null | grep -i warning | grep -iv 'pgrep')
+#if [ -n "$LY" ]; then
+#  echo "[$(TS)] [!] CRITICAL: SYSTEM VULNERABILITY"
+#  echo "$LY"
+#  echo "CRITICAL: Vulnerabilities (Lynis)" >> "$QUEUE"
+#  FOUND=1
+#fi
 
-[ "$FOUND" -eq 0 ] && echo "[$(TS)] Audit: clean"
+[ "$FOUND" -eq 0 ] && echo "[$(TS)] Audit: clean (ClamAV + Rkhunter; Lynis disabled)"
 `,
   },
   {
