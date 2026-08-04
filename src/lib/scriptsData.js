@@ -1454,7 +1454,7 @@ elif not want_restricted and is_restricted:
     id: "maintenance",
     filename: "pi-maintenance.sh",
     path: "/usr/local/bin/pi-maintenance.sh",
-    description: "Full nightly maintenance — flush logs, AdGuard, apt update+full-upgrade+autoremove, audit, service check, reboot (throttled to 600 MHz/powersave + nice/ionice + thermal gates between steps). apt+reboot is skipped when .updates_disabled is set via /updates stop, but logs/audit/service-check still run. Audit runs Sundays only (ClamAV + Rkhunter; Lynis disabled), not nightly.",
+    description: "Full nightly maintenance — flush logs, AdGuard, apt update+full-upgrade+autoremove, audit, service check, reboot (throttled to 600 MHz/powersave + nice/ionice + thermal gates between steps). apt+reboot is skipped when .updates_disabled is set via /updates stop, but logs/audit/service-check still run.",
     tags: ["maintenance", "bash", "cron", "thermal", "throttled"],
     code: `#!/bin/bash
 # Master Maintenance Script — full nightly, CPU-throttled to stay cool
@@ -1543,15 +1543,10 @@ else
 fi
 wait_for_cool
 
-# 3. Security Audit — weekly (Sundays only), throttled
-if [ "$(date +%u)" -eq 7 ]; then
-    log "Security audit (weekly)..."
-    $NICE /usr/local/bin/pi-audit.sh >> "$LOG_FILE" 2>&1
-    echo "Audit: COMPLETED (weekly, ClamAV + Rkhunter)" >> "$QUEUE"
-else
-    log "Audit: SKIPPED (weekly — Sundays only)"
-    echo "Audit: SKIPPED (weekly — Sundays)" >> "$QUEUE"
-fi
+# 3. Security Audit — every night, throttled
+log "Security audit..."
+$NICE /usr/local/bin/pi-audit.sh >> "$LOG_FILE" 2>&1
+echo "Audit: COMPLETED (nightly)" >> "$QUEUE"
 wait_for_cool
 
 # 4. Service Health
@@ -1581,7 +1576,7 @@ fi
     id: "pi-audit",
     filename: "pi-audit.sh",
     path: "/usr/local/bin/pi-audit.sh",
-    description: "Weekly security audit (called by pi-maintenance.sh on Sundays). Runs ClamAV + Rkhunter under nice/ionice; Lynis gated behind .audit_lynis flag (off by default). NO apt upgrades or reboot (maintenance owns those). Aborts if .maintenance_disabled lock set. Replaces the legacy pi-audit Go binary.",
+    description: "Nightly security audit called by pi-maintenance.sh. Runs ClamAV + Rkhunter + Lynis under nice/ionice. NO apt upgrades or reboot (maintenance owns those). Aborts if .maintenance_disabled lock is set. Replaces the legacy pi-audit Go binary.",
     tags: ["audit", "security", "bash", "maintenance"],
     code: `#!/bin/bash
 # Security audit — ClamAV + Rkhunter + Lynis, throttled under nice/ionice.
@@ -1619,17 +1614,13 @@ if [ -n "$RK" ]; then
   FOUND=1
 fi
 
-# 3. Lynis — disabled by default; enable with: touch /home/alon/secure-pi-bot/.audit_lynis
-if [ -f "/home/alon/secure-pi-bot/.audit_lynis" ]; then
-  LY=$(lynis audit system --quick 2>/dev/null | grep -i warning | grep -iv 'pgrep')
-  if [ -n "$LY" ]; then
-    echo "[$(TS)] [!] CRITICAL: SYSTEM VULNERABILITY"
-    echo "$LY"
-    echo "CRITICAL: Vulnerabilities (Lynis)" >> "$QUEUE"
-    FOUND=1
-  fi
-else
-  echo "[$(TS)] Audit: Lynis disabled (.audit_lynis missing)"
+# 3. Lynis — surface warnings, skip pgrep noise
+LY=$(lynis audit system --quick 2>/dev/null | grep -i warning | grep -iv 'pgrep')
+if [ -n "$LY" ]; then
+  echo "[$(TS)] [!] CRITICAL: SYSTEM VULNERABILITY"
+  echo "$LY"
+  echo "CRITICAL: Vulnerabilities (Lynis)" >> "$QUEUE"
+  FOUND=1
 fi
 
 [ "$FOUND" -eq 0 ] && echo "[$(TS)] Audit: clean"
