@@ -150,6 +150,34 @@ def minify_ss(s):
             rows.append(f"{p[3]} {p[4]}")
     return "; ".join(rows) or "no listeners"
 
+def _jsonl_tail(path, n=80):
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path) as f:
+            lines = [l.strip() for l in f if l.strip()]
+    except OSError:
+        return ""
+    if not lines:
+        return ""
+    out = []
+    for l in lines[-n:]:
+        try:
+            out.append(json.dumps(json.loads(l), separators=(",", ":")))
+        except json.JSONDecodeError:
+            out.append(l)
+    return "\\n".join(out)
+
+def minify_sys_log(raw):
+    s = (_jsonl_tail("/dev/shm/pi-bot/system_log.jsonl", 80)
+         or _jsonl_tail("/home/alon/secure-pi-bot/logs/system_log.jsonl", 80))
+    return s or "(no system_log yet)"
+
+def minify_fan_log(raw):
+    s = (_jsonl_tail("/dev/shm/pi-bot/fan_events.jsonl", 80)
+         or _jsonl_tail("/home/alon/secure-pi-bot/logs/fan_events.jsonl", 80))
+    return s or "(no fan_log yet)"
+
 INFO = {
     "system_status": (["systemctl", "is-system-running"], None),
     "running_services": (["systemctl", "list-units", "--type=service", "--state=running", "--no-legend"],
@@ -172,6 +200,10 @@ INFO = {
     "uptime": (["uptime"], None),
     "crontab": (["crontab", "-l"], None),
     "bot_state": (["ls", "-la", "/dev/shm/pi-bot/"], None),
+    "log_system": (["true"], minify_sys_log),
+    "log_fan": (["true"], minify_fan_log),
+    "log_maintenance": (["sh", "-c", "tail -n 60 /dev/shm/pi-bot/maintenance.log 2>/dev/null"], None),
+    "log_outage": (["sh", "-c", "for f in /home/alon/secure-pi-bot/outage/*.jsonl; do echo \"== $f ==\"; tail -n 20 \"$f\"; done 2>/dev/null"], None),
     "journal_errors": (["journalctl", "-p", "err", "-n", "20", "--no-pager"], None),
     "kernel": (["dmesg", "-T", "--level=err,warn", "-n", "15"], None),
     "lynis": (["lynis", "audit", "system", "--quick", "--no-colors"], "heavy"),
