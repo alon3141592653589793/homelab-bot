@@ -1442,10 +1442,10 @@ elif not want_restricted and is_restricted:
     id: "maintenance",
     filename: "pi-maintenance.sh",
     path: "/usr/local/bin/pi-maintenance.sh",
-    description: "Nightly maintenance: compress logs, OS upgrade, audit, service check, reboot. No unnecessary sudo (runs as root via cron).",
-    tags: ["maintenance", "bash", "cron"],
+    description: "Thermal-gated nightly maintenance. Daily: compress logs, AdGuard, apt update+autoremove, service check, reboot. Sunday: + full-upgrade + audit. Waits for cooldown between heavy steps, low CPU/IO priority via nice/ionice.",
+    tags: ["maintenance", "bash", "cron", "thermal"],
     code: `#!/bin/bash
-# Master Maintenance Script
+# Master Maintenance Script — thermal-gated, throttled
 
 LOG_FILE="/var/log/pi-maintenance.log"
 QUEUE="/home/alon/scripts/logs/ntfy_queue.txt"
@@ -1458,36 +1458,78 @@ mkdir -p /home/alon/scripts/logs
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; }
 
-log "--- MAINTENANCE START ---"
-echo "--- DAILY PI REPORT ($(date '+%Y-%m-%d')) ---" > "$QUEUE"
+# --- Thermal gate settings (temp in milli-degrees) ---
+TEMP_ZONE="/sys/class/thermal/thermal_zone0/temp"
+COOL_BELOW=58000     # consider cool under 58C
+MAX_WAIT_SEC=1200    # cap thermal wait at 20 min/step
+
+cur_temp() { cat "$TEMP_ZONE" 2>/dev/null || echo 0; }
+
+wait_for_cool() {
+    local waited=0
+    while [ "$waited" -lt "$MAX_WAIT_SEC" ]; do
+        local t=$(cur_temp)
+        [ "$t" -eq 0 ] && return 0
+        [ "$t" -lt "$COOL_BELOW" ] && return 0
+        log "Thermal gate: $((t/1000))C — waiting 30s..."
+        sleep 30
+        waited=$((waited + 30))
+    done
+    log "Thermal gate: max wait reached, proceeding anyway"
+}
+
+# Heavy OS ops run with low CPU + IO priority — smaller heat spikes
+NICE="nice -n 19 ionice -c 3"
+
+# Sunday = 0; heavy work only on Sunday, light cycle other nights
+DOW=$(date +%w)
+IS_SUNDAY=$([ "$DOW" = "0" ] && echo yes || echo no)
+
+log "--- MAINTENANCE START ($IS_SUNDAY == sunday) ---"
+echo "--- Pi Report ($(date '+%Y-%m-%d')) ---" > "$QUEUE"
 
 # 0. Flush RAM logs to disk before anything restarts
 log "Flushing RAM logs..."
 python3 /home/alon/secure-pi-bot/scripts/compress_logs.py >> "$LOG_FILE" 2>&1
+wait_for_cool
 
 # 1. AdGuard
 log "AdGuard upgrade..."
 /opt/AdGuardHome/AdGuardHome -s upgrade >> "$LOG_FILE" 2>&1
+wait_for_cool
 
-# 2. OS Updates
-log "OS update..."
-apt-get update -y >> "$LOG_FILE" 2>&1
-apt-get full-upgrade -y >> "$LOG_FILE" 2>&1
-apt-get autoremove -y >> "$LOG_FILE" 2>&1
-echo "OS Updates: SUCCESS" >> "$QUEUE"
+# 2. OS Updates — apt update every night; full-upgrade only on Sunday
+log "apt update..."
+$NICE apt-get update -y >> "$LOG_FILE" 2>&1
+
+if [ "$IS_SUNDAY" = "yes" ]; then
+    wait_for_cool
+    log "apt full-upgrade (Sunday heavy cycle)..."
+    $NICE apt-get full-upgrade -y >> "$LOG_FILE" 2>&1
+    wait_for_cool
+    log "apt autoremove..."
+    $NICE apt-get autoremove -y >> "$LOG_FILE" 2>&1
+    echo "OS Updates: FULL (weekly)" >> "$QUEUE"
+else
+    log "apt autoremove (light cycle)..."
+    $NICE apt-get autoremove -y >> "$LOG_FILE" 2>&1
+    echo "OS Updates: light (apt update only; full Sun)" >> "$QUEUE"
+fi
 
 mkdir -p /home/alon/.secrets
 date '+%Y-%m-%d %H:%M:%S' > /home/alon/.secrets/last_upgrade.txt
 chown alon:alon /home/alon/.secrets/last_upgrade.txt
+wait_for_cool
 
-# 3. Security Audit
-if [[ "$1" == "--quick" ]]; then
-    log "SKIPPING audit (--quick)"
-    echo "Audit: SKIPPED" >> "$QUEUE"
-else
-    log "Security audit..."
+# 3. Security Audit — Sunday only
+if [ "$IS_SUNDAY" = "yes" ]; then
+    log "Security audit (weekly)..."
     /usr/local/bin/pi-audit.sh >> "$LOG_FILE" 2>&1
-    echo "Audit: COMPLETED" >> "$QUEUE"
+    echo "Audit: COMPLETED (weekly)" >> "$QUEUE"
+    wait_for_cool
+else
+    log "SKIPPING audit (light night)"
+    echo "Audit: SKIPPED (Sunday only)" >> "$QUEUE"
 fi
 
 # 4. Service Health
