@@ -206,6 +206,9 @@ async def handle_reactive_command(client, message):
     elif content == "/fanreport":
         await run_script(message, "fan_report.py", "Reading fan log...")
 
+    elif content == "/lynis":
+        await run_script(message, "lynis_report.py", "Running Lynis audit (this can take a couple minutes)...", timeout=240)
+
     elif content == "/profile":
         await run_script(message, "profile_status.py", "Checking current performance profile...")
 
@@ -281,6 +284,7 @@ async def handle_reactive_command(client, message):
             "/restart              - Reboot Pi (requires confirmation)\\n"
             "/shutdown             - Power off Pi (requires confirmation)\\n"
             "/fanreport            - Show fan activation log\\n"
+            "/lynis                - Run Lynis security audit now\\n"
             "/weeklyreport         - Post weekly summary now\\n"
             "/weeklyreport stop    - Disable scheduled weekly reports\\n"
             "/weeklyreport start   - Re-enable scheduled weekly reports\\n"
@@ -307,19 +311,19 @@ import os
 SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 
 
-async def run_script(message, script_name, status_msg, args=None):
+async def run_script(message, script_name, status_msg, args=None, timeout=45):
     script_path = os.path.join(SCRIPTS_DIR, script_name)
     if status_msg:
         await message.channel.send(status_msg)
     try:
         cmd = ["python3", "-u", script_path] + (args or [])
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         output = (result.stdout or result.stderr or "No output.").strip()
         if len(output) > 1900:
             output = output[:1897] + "..."
         await message.channel.send(output)
     except subprocess.TimeoutExpired:
-        await message.channel.send("Script timed out after 45 seconds.")
+        await message.channel.send(f"Script timed out after {timeout} seconds.")
     except Exception as e:
         await message.channel.send(f"Script error: {e}")
 
@@ -615,6 +619,46 @@ total = sum(
 )
 lines.append(f"Total fan-on: {int(total // 60)}m")
 print("\\n".join(lines))
+`,
+  },
+  {
+    id: "lynis-report",
+    filename: "lynis_report.py",
+    path: "~/secure-pi-bot/scripts/lynis_report.py",
+    description: "Manual Lynis security audit invoked by /lynis. Surfaces warnings (W:), suggestions (S:), hardening index, and test count from a quick scan. Self-contained 180s internal timeout (outer runner gets 240s).",
+    tags: ["audit", "security", "lynis", "discord"],
+    code: `import subprocess
+from datetime import datetime
+
+try:
+    r = subprocess.run(
+        ["lynis", "audit", "system", "--quick", "--no-colors"],
+        capture_output=True, text=True, timeout=180
+    )
+    out = (r.stdout or r.stderr or "").strip()
+except FileNotFoundError:
+    print("FAILURE: lynis not installed. Run: sudo apt install lynis")
+    raise SystemExit(0)
+except subprocess.TimeoutExpired:
+    print("FAILURE: lynis timed out after 180s")
+    raise SystemExit(0)
+
+lines = out.splitlines()
+interesting = []
+for ln in lines:
+    s = ln.strip()
+    if s.startswith("W:") or s.startswith("S:") or "Hardening index" in s or "Tests performed" in s:
+        interesting.append(s)
+
+ts = datetime.now().strftime("%H:%M")
+header = f"**Lynis Report** [{ts}]"
+if not interesting:
+    print(f"{header}\\nNo warnings or suggestions found.\\n\\n{out[-1500:]}")
+else:
+    body = "\\n".join(interesting)
+    if len(body) > 1800:
+        body = body[:1800]
+    print(f"{header}\\n{body}")
 `,
   },
   {
@@ -1130,6 +1174,8 @@ SAFE_COMMANDS = [
     # --- System info ---
     ["uname", "-a"],
     ["uptime"],
+    # --- Security audit (read-only input for diagnostics) ---
+    ["lynis", "audit", "system", "--quick"],
     # --- Cron & schedules ---
     ["crontab", "-l"],
     # --- Bot-specific state ---
