@@ -10,6 +10,7 @@ const POLLING_RATES = [
   { label: "sync_bot_presence", rate: "every 4 min", note: "reads from /dev/shm (RAM)" },
   { label: "weekly_report.py", rate: "Mon 09:00", note: "posts to report channel" },
   { label: "log_sync.py", rate: "every 30 min", note: "RAM logs -> Google Sheets (no SD writes)" },
+  { label: "lynis_snapshot.py", rate: "Sun 04:00", note: "versioned Lynis -> Drive (keep 4) + AI diff" },
   { label: "pi-maintenance.sh", rate: "daily 03:00", note: "flush logs + OS upgrade + reboot" },
 ];
 

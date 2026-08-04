@@ -802,10 +802,9 @@ except ImportError as e:
     sys.exit(1)
 
 BOT_DIR = "/home/alon/secure-pi-bot"
-REPORTS_DIR = f"{BOT_DIR}/logs/weekly_reports"
 REPORT_CHANNEL_ID = 1524756593651224706
 
-os.makedirs(REPORTS_DIR, exist_ok=True)
+os.makedirs("/dev/shm/pi-bot", exist_ok=True)
 
 if os.path.exists(f"{BOT_DIR}/.weekly_report_disabled"):
     print("Weekly report disabled. Use /weeklyreport start to re-enable.")
@@ -913,14 +912,6 @@ lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total
 
 report = "\\n".join(lines)
 
-# Save (keep 3)
-ts = datetime.now().strftime("%Y%m%d_%H%M")
-with open(f"{REPORTS_DIR}/report_{ts}.txt", "w") as f:
-    f.write(report)
-saved = sorted(f"{REPORTS_DIR}/{fn}" for fn in os.listdir(REPORTS_DIR) if fn.endswith(".txt"))
-for old in saved[:-3]:
-    os.remove(old)
-
 post(report)
 print("Weekly report sent.")
 `,
@@ -943,7 +934,7 @@ BOT_DIR = "/home/alon/secure-pi-bot"
 RATE_LIMIT_FILE = "/dev/shm/pi-bot/.ai_rate"
 RATE_LIMIT_SECS = 10
 CONV_FILE = "/dev/shm/pi-bot/.ai_conversation.json"
-SUMMARY_LOG = f"{BOT_DIR}/logs/ai_summary_log.jsonl"
+SUMMARY_LOG = "/dev/shm/pi-bot/ai_summary_log.jsonl"
 SILENCE_THRESHOLD = 20 * 60
 
 MODEL_PRIORITY = [
@@ -1047,7 +1038,7 @@ if conversation["messages"] and (now - conversation.get("last_activity", 0)) > S
     )
     summary, _ = call_gemini(summary_prompt, MODEL_PRIORITY, max_tokens=200)
     if summary:
-        os.makedirs(f"{BOT_DIR}/logs", exist_ok=True)
+        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
         entry = {"ts": datetime.now().isoformat(timespec="seconds"), "summary": summary, "messages": len(conversation["messages"])}
         with open(SUMMARY_LOG, "a") as f:
             f.write(json.dumps(entry) + "\\n")
@@ -1429,9 +1420,10 @@ elif not want_restricted and is_restricted:
     code: `#!/bin/bash
 # Master Maintenance Script — full nightly, CPU-throttled to stay cool
 
-LOG_FILE="/var/log/pi-maintenance.log"
+LOG_FILE="/dev/shm/pi-bot/maintenance.log"
 QUEUE="/home/alon/scripts/logs/ntfy_queue.txt"
 mkdir -p /home/alon/scripts/logs
+mkdir -p /dev/shm/pi-bot
 
 [ -f /home/alon/secure-pi-bot/.maintenance_disabled ] && {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Maintenance disabled." >> "$LOG_FILE"
@@ -1626,8 +1618,142 @@ fi
 # Weekly report every Monday 09:00
 0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 
-# Nightly maintenance + reboot 03:00 (compress_logs runs inside)
-0 3 * * * /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1
+# Nightly maintenance + reboot 03:00 (compress_logs runs inside; log in RAM only)
+0 3 * * * /usr/local/bin/pi-maintenance.sh >> /dev/shm/pi-bot/maintenance_cron.log 2>&1
+
+# Weekly Lynis snapshot to Google Drive (versioned, keep last 4 + AI change-analysis)
+0 4 * * 0 python3 /home/alon/secure-pi-bot/scripts/lynis_snapshot.py
+`,
+  },
+  {
+    id: "lynis-snapshot",
+    filename: "lynis_snapshot.py",
+    path: "~/secure-pi-bot/scripts/lynis_snapshot.py",
+    description: "Weekly Lynis audit -> Google Drive as versioned text files (keeps last 4; older deleted). Compares against the newest Drive version (Drive is the source of truth, so reboots don't reset the baseline). On a detected change, auto-invokes ai_debug --auto with a prev-vs-current diff and appends the analysis to the uploaded file. Rate-limited Drive REST via the shared service account. State lives on Drive only — never SD.",
+    tags: ["lynis", "audit", "gdrive", "versioning", "ai"],
+    code: `import os
+import sys
+import json
+import time
+import subprocess
+import hashlib
+from datetime import datetime
+
+try:
+    from google.oauth2 import service_account
+    from google.auth.transport import requests as gauth_requests
+except ImportError:
+    print("FAILURE: google-auth missing. pip3 install --user google-auth", file=sys.stderr)
+    sys.exit(1)
+
+import requests as httpreq
+
+KEY_FILE = "/home/alon/.secrets/gcp_service_account.json"
+SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+PREFIX = "lynis_snapshot_"
+MAX_VERSIONS = 4
+
+if not os.path.exists(KEY_FILE):
+    print(f"FAILURE: {KEY_FILE} not found (see setup notes)", file=sys.stderr)
+    sys.exit(1)
+
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+CREDS = service_account.Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES)
+
+# --- Minimal rate-limit floor between Drive API calls ---
+_LAST = [0.0]
+
+def drive(method, url, **kw):
+    now = time.monotonic()
+    if now - _LAST[0] < 0.25:
+        time.sleep(0.25 - (now - _LAST[0]))
+    _LAST[0] = time.monotonic()
+    if not CREDS.valid or CREDS.expired:
+        CREDS.refresh(gauth_requests.Request())
+    headers = {"Authorization": f"Bearer {CREDS.token}"}
+    headers.update(kw.pop("headers", {}))
+    return httpreq.request(method, url, headers=headers, timeout=30, **kw)
+
+# --- Run Lynis ---
+try:
+    r = subprocess.run(["lynis", "audit", "system", "--quick", "--no-colors"],
+                       capture_output=True, text=True, timeout=180)
+    output = (r.stdout or r.stderr or "").strip()
+except FileNotFoundError:
+    print("FAILURE: lynis not installed"); sys.exit(1)
+except subprocess.TimeoutExpired:
+    print("FAILURE: lynis timed out"); sys.exit(1)
+
+digest = hashlib.sha256(output.encode()).hexdigest()
+
+def list_snapshots():
+    r = drive("GET", "https://www.googleapis.com/drive/v3/files",
+              params={"q": f"name contains '{PREFIX}' and trashed=false",
+                      "orderBy": "createdTime desc",
+                      "fields": "files(id,name,createdTime)",
+                      "pageSize": 20})
+    return r.json().get("files", []) if r.status_code == 200 else []
+
+def download_text(file_id):
+    r = drive("GET", f"https://www.googleapis.com/drive/v3/files/{file_id}",
+              params={"alt": "media"})
+    return r.text if r.status_code == 200 else ""
+
+snaps = list_snapshots()
+
+# --- Compare against newest Drive version (reboot-safe: Drive is state) ---
+if snaps:
+    prev = download_text(snaps[0]["id"])
+    if hashlib.sha256(prev.encode()).hexdigest() == digest:
+        print(f"Lynis unchanged — no new version. ({len(snaps)} snapshots on Drive.)")
+        sys.exit(0)
+    prompt = ("Weekly Lynis security audit output changed. Compare and explain what changed — "
+              "new warnings, removed warnings, hardening-index delta — and what each likely means "
+              "for the Pi. Cite specific lines.\\n\\n=== PREVIOUS ===\\n"
+              + prev[:8000] + "\\n\\n=== CURRENT ===\\n" + output[:8000])
+    try:
+        p = subprocess.run(["python3", "-u", os.path.join(SCRIPTS_DIR, "ai_debug.py"), "--auto", prompt],
+                           capture_output=True, text=True, timeout=120)
+        analysis = (p.stdout or "").strip() or "(no AI output)"
+    except Exception as e:
+        analysis = f"(AI diff failed: {e})"
+else:
+    analysis = "(baseline run — first snapshot on Drive, nothing to diff against)"
+
+# --- Compose upload body ---
+ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+body = f"=== LYNIS SNAPSHOT {ts} ===\\n{output}\\n\\n=== AI CHANGE ANALYSIS ===\\n{analysis}\\n"
+
+# --- Upload to Drive (multipart) ---
+fname = f"{PREFIX}{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+meta = {"name": fname, "mimeType": "text/plain"}
+multipart = {
+    "metadata": (fname + ".meta", json.dumps(meta), "application/json; charset=UTF-8"),
+    "file": (fname, body, "text/plain"),
+}
+r = drive("POST",
+          "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+          files=multipart)
+if r.status_code not in (200, 201):
+    print(f"FAILURE: Drive upload {r.status_code}: {r.text[:500]}"); sys.exit(1)
+file_id = r.json()["id"]
+
+# --- Share with user email (if configured) so you can read the file ---
+if os.path.exists(SHARE_EMAIL_FILE):
+    email = open(SHARE_EMAIL_FILE).read().strip()
+    if email:
+        drive("POST", f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
+              json={"type": "user", "emailAddress": email, "role": "reader"})
+
+# --- Rotate: keep this new one + 3 newest existing = MAX_VERSIONS ---
+newest_three = snaps[:3]
+to_delete = snaps[3:]
+for old in to_delete:
+    drive("DELETE", f"https://www.googleapis.com/drive/v3/files/{old['id']}")
+
+print(f"Lynis {('changed' if snaps else 'baseline')} -> uploaded {fname} to Drive; "
+      f"kept {1 + len(newest_three)} of {MAX_VERSIONS}, removed {len(to_delete)}.")
 `,
   },
   {
@@ -1817,8 +1943,9 @@ pip3 install --user requests psutil python-dotenv gspread
 # log_sync.py every 30 min and at reboot via compress_logs.py.
 # NO project logs touch the SD card anymore.
 #
-# 1. Google Cloud Console: enable "Google Sheets API", create a service
-#    account, add a JSON key, download it, and place at:
+# 1. Google Cloud Console: enable BOTH "Google Sheets API" AND
+#    "Google Drive API", create a service account, add a JSON key,
+#    download it, and place at:
 mkdir -p /home/alon/.secrets
 #    (upload the JSON as) /home/alon/.secrets/gcp_service_account.json
 chmod 600 /home/alon/.secrets/gcp_service_account.json
@@ -1828,6 +1955,15 @@ chmod 700 /home/alon/.secrets
 #    email (Editor). Put the sheet ID (from its URL) into a file:
 echo 'YOUR_SHEET_ID_HERE' > /home/alon/.secrets/gsheets_log_id.txt
 chmod 600 /home/alon/.secrets/gsheets_log_id.txt
+#
+# 3. lynis_snapshot.py uploads weekly Lynis versions to Drive (keeping
+#    the last 4) and shares each file with your email so you can read it:
+echo 'your_email@gmail.com' > /home/alon/.secrets/gdrive_share_email.txt
+chmod 600 /home/alon/.secrets/gdrive_share_email.txt
+#
+# (google-auth, used by log_sync + lynis_snapshot, is installed as a
+#  dependency of gspread. If you skipped gspread, also run:
+#  pip3 install --user google-auth)
 #
 # log_sync.py auto-creates two worksheets inside that sheet:
 #   "System Log"  -> ts, temp_c, ram_pct, warnings, spikes, failed
@@ -1844,7 +1980,8 @@ crontab - << 'EOF'
 * * * * * python3 /home/alon/secure-pi-bot/scripts/fan_logger.py
 */30 * * * * python3 /home/alon/secure-pi-bot/scripts/log_sync.py
 0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
-0 3 * * * /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1
+0 3 * * * /usr/local/bin/pi-maintenance.sh >> /dev/shm/pi-bot/maintenance_cron.log 2>&1
+0 4 * * 0 python3 /home/alon/secure-pi-bot/scripts/lynis_snapshot.py
 EOF
 
 crontab -l
