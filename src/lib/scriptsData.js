@@ -1,3 +1,5 @@
+import aiDebugEntry from "./scripts/aiDebugEntry";
+
 const scripts = [
   {
     id: "main",
@@ -923,399 +925,7 @@ post(report)
 print("Weekly report sent.")
 `,
   },
-  {
-    id: "ai-debug",
-    filename: "ai_debug.py",
-    path: "~/secure-pi-bot/scripts/ai_debug.py",
-    description: "Token-efficient, context-aware Pi diagnostic assistant. MANUAL (/aidebug <q>): AI sees only auto-detected red flags (errors, failed services, high RAM/temp/disk/load) then may call get_info(source) for any read-only diagnostic on demand. AUDIT (--audit, weekly cron): all info sources run minified (df/free/ps stripped of tmpfs/loop/heavy procs; tables -> key-value) with Lynis in a separate second pass. AUTO-ERROR (thermal/failed-service triggers): focused pass then a broadened pass to see if extra info changes the conclusion. Read-only whitelist only (no sudo, no writes). Settings-cat limited to a hardcoded non-sensitive allowlist. Rate limit in RAM (300s manual). API key from ~/.secrets/gemini_key. Auto/audit modes self-post to REPORT_CHANNEL_ID.",
-    tags: ["ai", "debug", "gemini", "tool-calling", "minified", "audit"],
-    code: `import os
-import sys
-import time
-import json
-import subprocess
-import requests
-import api_manager
-from datetime import datetime
-
-try:
-    import psutil
-except ImportError:
-    psutil = None
-
-BOT_DIR = "/home/alon/secure-pi-bot"
-SHM = "/dev/shm/pi-bot"
-RATE_FILE = f"{SHM}/.ai_rate"
-CONV_FILE = f"{SHM}/.ai_conversation.json"
-SUMMARY_LOG = f"{SHM}/ai_summary_log.jsonl"
-RATE_WINDOW = 300            # manual /aidebug cooldown (RAM-backed)
-SILENCE = 20 * 60            # idle time before conversation is summarized+cleared
-REPORT_CHANNEL_ID = 1524756593651224706
-
-os.makedirs(SHM, exist_ok=True)
-
-from dotenv import load_dotenv
-load_dotenv(f"{BOT_DIR}/.env")
-DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-try:
-    with open("/home/alon/.secrets/gemini_key") as f:
-        GEMINI_KEY = f.read().strip()
-except OSError:
-    print("FAILURE: /home/alon/.secrets/gemini_key not found.")
-    sys.exit(1)
-
-MODEL_PRIORITY = [
-    "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro",
-    "gemini-3-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite",
-]
-
-# ---- Mode parse ----
-args = sys.argv[1:]
-mode = "manual"
-custom_model = None
-if args and args[0].lower().startswith("gemini"):
-    custom_model = args[0]; args = args[1:]
-if "--audit" in args:
-    mode = "audit"; args = [a for a in args if a != "--audit"]
-elif "--auto-error" in args:
-    mode = "auto-error"; args = [a for a in args if a != "--auto-error"]
-elif "--auto" in args:
-    mode = "auto"; args = [a for a in args if a != "--auto"]
-prompt = " ".join(args).strip()
-if not prompt:
-    prompt = {"manual":"Automatic diagnostic","auto":"Automatic diagnostic",
-              "auto-error":"Automatic error diagnosis","audit":"Weekly scheduled audit"}[mode]
-MODELS = [custom_model] if custom_model else MODEL_PRIORITY
-AUTO_MODE = mode in ("auto", "audit", "auto-error")
-
-# ---- Rate limit (skip for auto/audit) ----
-now = time.time()
-if not AUTO_MODE:
-    try:
-        with open(RATE_FILE) as f:
-            last = float(f.read().strip() or "0")
-        if now - last < RATE_WINDOW:
-            print(f"Wait {int(RATE_WINDOW - (now - last))}s between /aidebug calls.")
-            sys.exit(0)
-    except (OSError, ValueError):
-        pass
-    with open(RATE_FILE, "w") as f:
-        f.write(str(now))
-
-# ---- Minifiers ----
-def _mhz(s):
-    try:
-        return f"{int(s)//1000} MHz"
-    except ValueError:
-        return s
-
-def _throttled(s):
-    v = s.split("=")[-1].strip()
-    try:
-        code = int(v, 0)
-    except ValueError:
-        return s
-    flags = []
-    if code & 0x1: flags.append("under-voltage")
-    if code & 0x2: flags.append("freq-capped")
-    if code & 0x4: flags.append("throttled")
-    if code & 0x10000: flags.append("was under-voltage")
-    if code & 0x20000: flags.append("was freq-capped")
-    if code & 0x40000: flags.append("was throttled")
-    return "Throttled: " + (", ".join(flags) if flags else "no")
-
-def minify_disk(s):
-    rows = []
-    for line in s.splitlines():
-        p = line.split()
-        if len(p) < 6 or p[0].startswith(("tmpfs", "devtmpfs", "overlay", "loop")):
-            continue
-        rows.append(f"{p[5]} {p[4]} used ({p[2]}/{p[1]}, {p[3]} free)")
-    return "; ".join(rows) or "n/a"
-
-def minify_mem(s):
-    out = {}
-    for line in s.splitlines():
-        p = line.split()
-        if p and p[0] == "Mem:" and len(p) >= 4:
-            out["RAM"] = f"{p[2]}/{p[1]} used"
-        elif p and p[0] == "Swap:" and len(p) >= 4:
-            out["Swap"] = f"{p[2]}/{p[1]}"
-    return "; ".join(f"{k}:{v}" for k, v in out.items()) or "n/a"
-
-def minify_ps(s):
-    rows = []
-    for line in s.splitlines():
-        p = line.split()
-        if len(p) < 4:
-            continue
-        try:
-            cpu = float(p[2]); mem = float(p[3])
-        except ValueError:
-            continue
-        if cpu >= 10 or mem >= 5:
-            rows.append(f"{p[1]}({p[0]}) {cpu}%cpu {mem}%mem")
-    return "; ".join(rows) or "no heavy procs"
-
-def minify_ip(s):
-    rows = []
-    for line in s.splitlines():
-        if " inet " in line:
-            rows.append(line.strip().split("inet ")[1].split()[0])
-    return "; ".join(rows) or "n/a"
-
-def minify_ss(s):
-    rows = []
-    for line in s.splitlines():
-        p = line.split()
-        if len(p) >= 5 and p[0] == "LISTEN":
-            rows.append(f"{p[3]} {p[4]}")
-    return "; ".join(rows) or "no listeners"
-
-INFO = {
-    "system_status": (["systemctl", "is-system-running"], None),
-    "running_services": (["systemctl", "list-units", "--type=service", "--state=running", "--no-legend"],
-                         lambda s: "; ".join(l.split()[0] for l in s.splitlines() if l.strip())[:1500]),
-    "timers": (["systemctl", "list-timers", "--all", "--no-legend"], None),
-    "temp": (["vcgencmd", "measure_temp"], None),
-    "throttled": (["vcgencmd", "get_throttled"], _throttled),
-    "clock_arm": (["vcgencmd", "measure_clock", "arm"], None),
-    "clock_core": (["vcgencmd", "measure_clock", "core"], None),
-    "cpu_freq": (["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"], _mhz),
-    "cpu_gov": (["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"], None),
-    "memory": (["free", "-h"], minify_mem),
-    "disk": (["df", "-h"], minify_disk),
-    "load": (["cat", "/proc/loadavg"], None),
-    "processes": (["ps", "-eo", "pid,comm,%cpu,%mem", "--sort=-%cpu", "--no-header"], minify_ps),
-    "network": (["ip", "addr", "show"], minify_ip),
-    "routes": (["ip", "route", "show"], None),
-    "listening": (["ss", "-tln"], minify_ss),
-    "uname": (["uname", "-a"], None),
-    "uptime": (["uptime"], None),
-    "crontab": (["crontab", "-l"], None),
-    "bot_state": (["ls", "-la", "/dev/shm/pi-bot/"], None),
-    "journal_errors": (["journalctl", "-p", "err", "-n", "20", "--no-pager"], None),
-    "kernel": (["dmesg", "-T", "--level=err,warn", "-n", "15"], None),
-    "lynis": (["lynis", "audit", "system", "--quick", "--no-colors"], "heavy"),
-}
-
-# Non-sensitive settings files the AI may read (curated; never secrets/env).
-SAFE_SETTINGS = {
-    "maintenance_script": "/usr/local/bin/pi-maintenance.sh",
-    "audit_script": "/usr/local/bin/pi-audit.sh",
-    "polkit_rules": "/etc/polkit-1/rules.d/49-pi-bot.rules",
-    "udev_rules": "/etc/udev/rules.d/99-cpufreq.rules",
-}
-
-TOOL_NAMES = sorted(list(INFO.keys()) + list(SAFE_SETTINGS.keys()))
-
-def fetch_source(src):
-    if src in SAFE_SETTINGS:
-        try:
-            with open(SAFE_SETTINGS[src]) as f:
-                return f.read()[:6000]
-        except OSError as e:
-            return f"(err: {e})"
-    info = INFO.get(src)
-    if not info:
-        return f"(unknown source: {src})"
-    cmd, m = info
-    timeout = 180 if m == "heavy" else 6
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        raw = (r.stdout or r.stderr or "(empty)").strip()
-    except Exception as e:
-        return f"(err: {e})"
-    if m == "heavy":
-        return raw[:6000]
-    if callable(m):
-        return m(raw)
-    return raw[:1200]
-
-def red_flags():
-    flags = []
-    try:
-        with open("/sys/class/thermal/thermal_zone0/temp") as f:
-            t = int(f.read()) / 1000.0
-        if t >= 70: flags.append(f"HIGH TEMP {t:.1f}C")
-        elif t >= 60: flags.append(f"WARM {t:.1f}C")
-        else: flags.append(f"temp {t:.1f}C")
-    except OSError:
-        pass
-    if psutil:
-        vm = psutil.virtual_memory()
-        if vm.percent >= 90: flags.append(f"HIGH RAM {vm.percent:.0f}%")
-        elif vm.percent >= 80: flags.append(f"ELEVATED RAM {vm.percent:.0f}%")
-        for part in psutil.disk_partitions(all=False):
-            if part.fstype == "tmpfs" or part.device.startswith("/dev/loop"):
-                continue
-            try:
-                u = psutil.disk_usage(part.mountpoint)
-            except OSError:
-                continue
-            if u.percent >= 90:
-                flags.append(f"HIGH DISK {part.mountpoint} {u.percent:.0f}%")
-    try:
-        la = os.getloadavg()[0]
-        cores = os.cpu_count() or 4
-        if la > cores * 0.8:
-            flags.append(f"HIGH LOAD {la:.2f}/{cores}c")
-    except OSError:
-        pass
-    try:
-        r = subprocess.run(["systemctl", "list-units", "--state=failed", "--no-legend", "--plain"],
-                            capture_output=True, text=True, timeout=5)
-        fams = [l.split()[0] for l in r.stdout.splitlines() if l.strip() and "clamav" not in l.split()[0]]
-        if fams:
-            flags.append("FAILED: " + " ".join(fams))
-    except Exception:
-        pass
-    return flags
-
-def build_context(audit):
-    r = red_flags()
-    out = ["RED FLAGS: " + (" | ".join(r) if r else "none")]
-    if audit:
-        out.append("FULL SYSTEM INFO (minified):")
-        for name in INFO:
-            if name == "lynis":
-                continue
-            out.append(f"$ {name}\\n{fetch_source(name)}")
-    return "\\n".join(out)
-
-# ---- Gemini call + tool loop ----
-TOOL_DECL = [{"name": "get_info",
-              "description": "Fetch a read-only diagnostic source (system metric, command output, or a curated non-sensitive settings file) by name. Call only when you need more detail than the context already gives.",
-              "parameters": {"type": "object",
-                             "properties": {"source": {"type": "string", "enum": TOOL_NAMES}},
-                             "required": ["source"]}}]
-TOOLS = [{"functionDeclarations": TOOL_DECL}]
-
-def call_gemini(contents, models, tools=True, max_tokens=800):
-    for model in models:
-        payload = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}}
-        if tools:
-            payload["tools"] = TOOLS
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
-        try:
-            api_manager.rate_limit("gemini")
-            resp = requests.post(url, json=payload, timeout=60)
-            if resp.status_code in (429, 503):
-                time.sleep(1.5); continue
-            if resp.status_code == 400 and tools:
-                continue
-            resp.raise_for_status()
-            return resp.json(), model
-        except Exception:
-            continue
-    return None, None
-
-def gemini_text(prompt_text, models, max_tokens=300):
-    resp, m = call_gemini([{"role": "user", "parts": [{"text": prompt_text}]}], models, tools=False, max_tokens=max_tokens)
-    if not resp:
-        return None, m
-    parts = resp.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-    return "".join(p.get("text", "") for p in parts if "text" in p).strip(), m
-
-def diag_loop(context, question, models, max_rounds=4, tools=True):
-    contents = [{"role": "user", "parts": [{"text": f"{question}\\n\\nContext:\\n{context}\\n\\nAs the Pi diagnostic assistant, give a concise diagnosis citing exact values. Call get_info(source) only if you need more detail."}]}]
-    used = None
-    for _ in range(max_rounds):
-        resp, used = call_gemini(contents, models, tools=tools)
-        if not resp:
-            if tools:
-                return diag_loop(context, question, models, max_rounds=1, tools=False)
-            return None, used
-        parts = resp.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        fn = [p for p in parts if "functionCall" in p]
-        if not fn:
-            return "".join(p.get("text", "") for p in parts if "text" in p).strip(), used
-        contents.append({"role": "model", "parts": parts})
-        fr = []
-        for p in fn:
-            if p["functionCall"]["name"] == "get_info":
-                src = p["functionCall"].get("args", {}).get("source", "")
-                fr.append({"functionResponse": {"name": "get_info", "response": {"source": src, "result": fetch_source(src)}}})
-        contents.append({"role": "user", "parts": fr})
-    return None, used
-
-# ---- Conversation memory (manual mode) ----
-def load_conv():
-    try:
-        with open(CONV_FILE) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {"messages": [], "last": 0}
-
-def save_conv(c):
-    with open(CONV_FILE, "w") as f:
-        json.dump(c, f)
-
-def post_discord(text):
-    if not DISCORD_TOKEN:
-        return
-    for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
-        try:
-            requests.post(f"https://discord.com/api/v10/channels/{REPORT_CHANNEL_ID}/messages",
-                          headers={"Authorization": f"Bot {DISCORD_TOKEN}"}, json={"content": chunk}, timeout=10)
-        except Exception:
-            pass
-
-ts = datetime.now().strftime("%H:%M")
-final_text = None
-used_model = None
-
-if mode == "manual":
-    conv = load_conv()
-    if conv["messages"] and (now - conv.get("last", 0)) > SILENCE:
-        ct = "".join(f"{'U' if m['role']=='user' else 'A'}: {m['text'][:300]}\\n" for m in conv["messages"])
-        summ, _ = gemini_text(f"Summarize this Pi diagnostic chat in <300 chars:\\n{ct}", MODELS)
-        if summ:
-            with open(SUMMARY_LOG, "a") as f:
-                f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "summary": summ, "n": len(conv["messages"])}) + "\\n")
-            print(f"Observation: previous conversation summarized -> log.\\n")
-        conv = {"messages": [], "last": 0}
-    conv_ctx = ""
-    if conv["messages"]:
-        conv_ctx = "Previous conversation:\\n"
-        for m in conv["messages"][-6:]:
-            conv_ctx += f"{'U' if m['role']=='user' else 'A'}: {m['text'][:300]}\\n"
-        conv_ctx += "\\n"
-    final_text, used_model = diag_loop(conv_ctx + build_context(audit=False), prompt, MODELS)
-    if final_text:
-        conv["messages"].append({"role": "user", "text": prompt})
-        conv["messages"].append({"role": "assistant", "text": final_text})
-        conv["last"] = time.time()
-        save_conv(conv)
-
-elif mode == "audit":
-    context = build_context(audit=True)
-    main_review, used_model = diag_loop(context, "Weekly system audit. Summarize health, list concerns with exact values, recommend actions.", MODELS)
-    lyn = fetch_source("lynis")
-    sec_review, _ = diag_loop(f"Previous audit:\\n{main_review or ''}\\n\\nLYNIS (heavy) output:\\n{lyn}",
-                             "Given the weekly audit and this Lynis output, review security posture for the week; note whether things improved or worsened, citing specific warnings.", MODELS, max_rounds=3)
-    final_text = (main_review or "(no audit)") + "\\n\\n=== LYNIS WEEKLY REVIEW ===\\n" + (sec_review or "(no review)")
-    post_discord(f"**Weekly AI Audit** [{ts}]\\n{final_text}")
-
-elif mode == "auto":
-    final_text, used_model = diag_loop("", prompt, MODELS)
-
-elif mode == "auto-error":
-    focused = build_context(audit=False)
-    first, used_model = diag_loop(focused, f"Automatic error diagnosis. Trigger: {prompt}. Identify root cause and likely fix, citing exact values.", MODELS)
-    broad = build_context(audit=True)
-    second, _ = diag_loop(broad, f"Earlier conclusion: {first or ''}\\n\\nBroader info above. Note if anything adds to or changes your earlier conclusion. Be concise.", MODELS)
-    final_text = first or ""
-    if second:
-        final_text += "\\n\\n--- BROADENED CHECK ---\\n" + second
-    post_discord(f"**Auto-Diagnosis** [{ts}] trigger: {prompt}\\n{final_text}")
-
-if final_text:
-    print(f"**AI Debug** [{ts}] mode={mode} model={used_model}\\n{final_text}")
-else:
-    print(f"**AI Debug** [{ts}] mode={mode} — no response (all models failed).")
-`,
-  },
+  aiDebugEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
@@ -1807,12 +1417,12 @@ fi
     id: "lynis-snapshot",
     filename: "lynis_snapshot.py",
     path: "~/secure-pi-bot/scripts/lynis_snapshot.py",
-    description: "Weekly Lynis audit -> Google Drive as versioned text files (keeps last 4; older deleted). Compares against the newest Drive version (Drive is the source of truth, so reboots don't reset the baseline). On a detected change, auto-invokes ai_debug --auto with a prev-vs-current diff and appends the analysis to the uploaded file. Rate-limited Drive REST via the shared service account. State lives on Drive only — never SD.",
-    tags: ["lynis", "audit", "gdrive", "versioning", "ai"],
+    description: "Weekly Lynis audit saved to Google Drive as versioned plain-text files (keeps last 4; older deleted). Compares against the newest Drive version (Drive is the source of truth — reboots safe). On a detected change, auto-runs ai_debug --auto --web (Gemini google_search grounding) to explain what changed for better/worse and POSTS that analysis to Discord; the full text (Lynis + analysis) is uploaded to Drive and shared with your email. If the service-account key is missing, falls back to local SD-card text files with the same keep-4 rotation. Rate-limited via api_manager.",
+    tags: ["lynis", "audit", "gdrive", "versioning", "ai", "web-search"],
     code: `import os
 import sys
 import json
-import time
+import glob
 import subprocess
 import hashlib
 from datetime import datetime
@@ -1821,8 +1431,7 @@ try:
     from google.oauth2 import service_account
     from google.auth.transport import requests as gauth_requests
 except ImportError:
-    print("FAILURE: google-auth missing. pip3 install --user google-auth", file=sys.stderr)
-    sys.exit(1)
+    service_account = None
 
 import requests as httpreq
 import api_manager
@@ -1830,18 +1439,15 @@ import api_manager
 KEY_FILE = "/home/alon/.secrets/gcp_service_account.json"
 SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = "/home/alon/secure-pi-bot/logs"
 PREFIX = "lynis_snapshot_"
 MAX_VERSIONS = 4
+REPORT_CHANNEL_ID = 1524756593651224706
 
-if not os.path.exists(KEY_FILE):
-    print(f"FAILURE: {KEY_FILE} not found (see setup notes)", file=sys.stderr)
-    sys.exit(1)
-
+os.makedirs(LOG_DIR, exist_ok=True)
+DRIVE_READY = service_account is not None and os.path.exists(KEY_FILE)
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-CREDS = service_account.Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES)
-
-# --- Minimal rate-limit floor between Drive API calls ---
-_LAST = [0.0]
+CREDS = service_account.Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES) if DRIVE_READY else None
 
 def drive(method, url, **kw):
     api_manager.rate_limit("gdrive")
@@ -1851,7 +1457,6 @@ def drive(method, url, **kw):
     headers.update(kw.pop("headers", {}))
     return httpreq.request(method, url, headers=headers, timeout=30, **kw)
 
-# --- Run Lynis ---
 try:
     r = subprocess.run(["lynis", "audit", "system", "--quick", "--no-colors"],
                        capture_output=True, text=True, timeout=180)
@@ -1862,74 +1467,103 @@ except subprocess.TimeoutExpired:
     print("FAILURE: lynis timed out"); sys.exit(1)
 
 digest = hashlib.sha256(output.encode()).hexdigest()
+ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+fname = f"{PREFIX}{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
 
+def run_ai_diff(prev, cur):
+    """AI explains the diff — may use Google Search (--web) for unknown warning codes."""
+    prompt = ("Weekly Lynis security audit output changed. Compare and explain what changed — "
+              "new warnings, removed warnings, hardening-index delta — and what each likely means "
+              "for the Pi (for better or worse). Use web search to look up any unfamiliar warning "
+              "codes. Cite specific lines.\\n\\n=== PREVIOUS ===\\n" + prev[:8000]
+              + "\\n\\n=== CURRENT ===\\n" + cur[:8000])
+    try:
+        p = subprocess.run(["python3", "-u", os.path.join(SCRIPTS_DIR, "ai_debug.py"),
+                            "--auto", "--web", prompt],
+                           capture_output=True, text=True, timeout=180)
+        return (p.stdout or "").strip() or "(no AI output)"
+    except Exception as e:
+        return f"(AI diff failed: {e})"
+
+def post_discord(text):
+    from dotenv import load_dotenv
+    load_dotenv("/home/alon/secure-pi-bot/.env")
+    tok = os.getenv("DISCORD_BOT_TOKEN")
+    if not tok:
+        return
+    for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
+        try:
+            httpreq.post(f"https://discord.com/api/v10/channels/{REPORT_CHANNEL_ID}/messages",
+                         headers={"Authorization": f"Bot {tok}"}, json={"content": chunk}, timeout=10)
+        except Exception:
+            pass
+
+# --- SD-card fallback (until service-account key is configured) ---
+if not DRIVE_READY:
+    files = sorted(glob.glob(f"{LOG_DIR}/{PREFIX}*.txt"))
+    prev = open(files[-1]).read() if files else None
+    if prev and hashlib.sha256(prev.encode()).hexdigest() == digest:
+        print("Lynis unchanged (SD fallback — no new version).")
+        sys.exit(0)
+    analysis = "(baseline run — first snapshot)" if not prev else run_ai_diff(prev, output)
+    body = f"=== LYNIS SNAPSHOT {ts} ===\\n{output}\\n\\n=== AI CHANGE ANALYSIS ===\\n{analysis}\\n"
+    with open(os.path.join(LOG_DIR, fname), "w") as f:
+        f.write(body)
+    for old in files[:-3]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    if prev:
+        post_discord(f"**Lynis change analysis (SD fallback)** [{ts}]\\n{analysis}")
+    print(f"Lynis {'changed' if prev else 'baseline'} -> {fname} (SD fallback, kept last 4 locally).")
+    sys.exit(0)
+
+# --- Drive path (keys configured) ---
 def list_snapshots():
     r = drive("GET", "https://www.googleapis.com/drive/v3/files",
-              params={"q": f"name contains '{PREFIX}' and trashed=false",
-                      "orderBy": "createdTime desc",
-                      "fields": "files(id,name,createdTime)",
-                      "pageSize": 20})
+              params={"q": f"name contains '{PREFIX}' and trashed=false", "orderBy": "createdTime desc",
+                      "fields": "files(id,name,createdTime)", "pageSize": 20})
     return r.json().get("files", []) if r.status_code == 200 else []
 
-def download_text(file_id):
-    r = drive("GET", f"https://www.googleapis.com/drive/v3/files/{file_id}",
-              params={"alt": "media"})
+def download_text(fid):
+    r = drive("GET", f"https://www.googleapis.com/drive/v3/files/{fid}", params={"alt": "media"})
     return r.text if r.status_code == 200 else ""
 
 snaps = list_snapshots()
-
-# --- Compare against newest Drive version (reboot-safe: Drive is state) ---
 if snaps:
     prev = download_text(snaps[0]["id"])
     if hashlib.sha256(prev.encode()).hexdigest() == digest:
         print(f"Lynis unchanged — no new version. ({len(snaps)} snapshots on Drive.)")
         sys.exit(0)
-    prompt = ("Weekly Lynis security audit output changed. Compare and explain what changed — "
-              "new warnings, removed warnings, hardening-index delta — and what each likely means "
-              "for the Pi. Cite specific lines.\\n\\n=== PREVIOUS ===\\n"
-              + prev[:8000] + "\\n\\n=== CURRENT ===\\n" + output[:8000])
-    try:
-        p = subprocess.run(["python3", "-u", os.path.join(SCRIPTS_DIR, "ai_debug.py"), "--auto", prompt],
-                           capture_output=True, text=True, timeout=120)
-        analysis = (p.stdout or "").strip() or "(no AI output)"
-    except Exception as e:
-        analysis = f"(AI diff failed: {e})"
+    analysis = run_ai_diff(prev, output)
 else:
     analysis = "(baseline run — first snapshot on Drive, nothing to diff against)"
 
-# --- Compose upload body ---
-ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 body = f"=== LYNIS SNAPSHOT {ts} ===\\n{output}\\n\\n=== AI CHANGE ANALYSIS ===\\n{analysis}\\n"
-
-# --- Upload to Drive (multipart) ---
-fname = f"{PREFIX}{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
 meta = {"name": fname, "mimeType": "text/plain"}
-multipart = {
-    "metadata": (fname + ".meta", json.dumps(meta), "application/json; charset=UTF-8"),
-    "file": (fname, body, "text/plain"),
-}
-r = drive("POST",
-          "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
-          files=multipart)
+multipart = {"metadata": (fname + ".meta", json.dumps(meta), "application/json; charset=UTF-8"),
+             "file": (fname, body, "text/plain")}
+r = drive("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", files=multipart)
 if r.status_code not in (200, 201):
     api_manager.queue_outage("gdrive", "upload", {"fname": fname, "body": body})
-    print(f"FAILURE: Drive upload {r.status_code} ({r.text[:200]}) — queued to outage buffer for retry.")
+    print(f"FAILURE: Drive upload {r.status_code} ({r.text[:200]}) — queued to outage buffer.")
     sys.exit(1)
 file_id = r.json()["id"]
 
-# --- Share with user email (if configured) so you can read the file ---
 if os.path.exists(SHARE_EMAIL_FILE):
     email = open(SHARE_EMAIL_FILE).read().strip()
     if email:
         drive("POST", f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
               json={"type": "user", "emailAddress": email, "role": "reader"})
 
-# --- Rotate: keep this new one + 3 newest existing = MAX_VERSIONS ---
 newest_three = snaps[:3]
 to_delete = snaps[3:]
 for old in to_delete:
     drive("DELETE", f"https://www.googleapis.com/drive/v3/files/{old['id']}")
 
+if snaps:
+    post_discord(f"**Lynis change analysis** [{ts}]\\n{analysis}")
 print(f"Lynis {('changed' if snaps else 'baseline')} -> uploaded {fname} to Drive; "
       f"kept {1 + len(newest_three)} of {MAX_VERSIONS}, removed {len(to_delete)}.")
 `,
@@ -2157,7 +1791,7 @@ print(f"Drained from outage buffer: {d1} sheets + {d2} drive items.")
     id: "log-sync",
     filename: "log_sync.py",
     path: "~/secure-pi-bot/scripts/log_sync.py",
-    description: "Syncs RAM logs (system_log + fan_events) to Google Sheets via a GCP service account. Delta-sync by timestamp so RAM rotation is safe (already-synced entries never re-pushed). Called every 30 min (cron) and at reboot (compress_logs.py). Replaces all SD-card log flushes.",
+    description: "Syncs RAM logs (system_log + fan_events) to Google Sheets via a GCP service account. Delta-sync by timestamp so RAM rotation is safe. Called every 30 min (cron) and at reboot (compress_logs.py). When the service-account keys are missing, it falls back to SD-card JSONL so logging keeps working until the keys are set up.",
     tags: ["logging", "gsheets", "sync", "ram"],
     code: `import os
 import sys
@@ -2166,8 +1800,7 @@ import json
 try:
     import gspread
 except ImportError:
-    print("FAILURE: gspread missing. pip3 install --user gspread", file=sys.stderr)
-    sys.exit(1)
+    gspread = None
 
 SHM_DIR = "/dev/shm/pi-bot"
 import api_manager
@@ -2176,15 +1809,17 @@ FAN_LOG = f"{SHM_DIR}/fan_events.jsonl"
 STATE_FILE = f"{SHM_DIR}/.log_sync_state.json"
 KEY_FILE = "/home/alon/.secrets/gcp_service_account.json"
 SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
+LOG_DIR = "/home/alon/secure-pi-bot/logs"
+DISK_SYS = f"{LOG_DIR}/system_log.jsonl"
+DISK_FAN = f"{LOG_DIR}/fan_events.jsonl"
 
-for p in (KEY_FILE, SHEET_ID_FILE):
-    if not os.path.exists(p):
-        print(f"FAILURE: {p} not found (see setup notes)", file=sys.stderr)
-        sys.exit(1)
-
-SHEET_ID = open(SHEET_ID_FILE).read().strip()
-gc = gspread.service_account(filename=KEY_FILE)
-sh = gc.open_by_key(SHEET_ID)
+os.makedirs(LOG_DIR, exist_ok=True)
+CLOUD_READY = gspread is not None and os.path.exists(KEY_FILE) and os.path.exists(SHEET_ID_FILE)
+sh = SHEET_ID = None
+if CLOUD_READY:
+    SHEET_ID = open(SHEET_ID_FILE).read().strip()
+    gc = gspread.service_account(filename=KEY_FILE)
+    sh = gc.open_by_key(SHEET_ID)
 
 def ensure_sheet(title, headers):
     try:
@@ -2214,7 +1849,7 @@ def read_lines(path):
 
 # --- System log (delta by timestamp — rotation-safe) ---
 st = load_state()
-sys_ws = ensure_sheet("System Log", ["ts", "temp_c", "ram_pct", "ram_warning", "disk_spike", "spike", "failed"])
+sys_ws = ensure_sheet("System Log", ["ts", "temp_c", "ram_pct", "ram_warning", "disk_spike", "spike", "failed"]) if CLOUD_READY else None
 last_sys = st["last_sys_ts"]
 sys_rows = []
 new_max = last_sys
@@ -2237,16 +1872,21 @@ for line in read_lines(SYS_LOG):
         if ts > new_max:
             new_max = ts
 if sys_rows:
-    api_manager.rate_limit("gsheets")
-    try:
-        with api_manager.critical_op():
-            sys_ws.append_rows(sys_rows, value_input_option="RAW")
-    except Exception:
-        api_manager.queue_outage("gsheets", "rows", {"ws": "System Log", "rows": sys_rows})
+    if CLOUD_READY:
+        api_manager.rate_limit("gsheets")
+        try:
+            with api_manager.critical_op():
+                sys_ws.append_rows(sys_rows, value_input_option="RAW")
+        except Exception:
+            api_manager.queue_outage("gsheets", "rows", {"ws": "System Log", "rows": sys_rows})
+    else:
+        with open(DISK_SYS, "a") as f:
+            for r in sys_rows:
+                f.write(json.dumps(r) + "\\n")
 st["last_sys_ts"] = new_max
 
 # --- Fan events (delta by timestamp) ---
-fan_ws = ensure_sheet("Fan Events", ["ts", "event", "note"])
+fan_ws = ensure_sheet("Fan Events", ["ts", "event", "note"]) if CLOUD_READY else None
 last_fan = st["last_fan_ts"]
 fan_rows = []
 new_max_f = last_fan
@@ -2261,16 +1901,22 @@ for line in read_lines(FAN_LOG):
         if ts > new_max_f:
             new_max_f = ts
 if fan_rows:
-    api_manager.rate_limit("gsheets")
-    try:
-        with api_manager.critical_op():
-            fan_ws.append_rows(fan_rows, value_input_option="RAW")
-    except Exception:
-        api_manager.queue_outage("gsheets", "rows", {"ws": "Fan Events", "rows": fan_rows})
+    if CLOUD_READY:
+        api_manager.rate_limit("gsheets")
+        try:
+            with api_manager.critical_op():
+                fan_ws.append_rows(fan_rows, value_input_option="RAW")
+        except Exception:
+            api_manager.queue_outage("gsheets", "rows", {"ws": "Fan Events", "rows": fan_rows})
+    else:
+        with open(DISK_FAN, "a") as f:
+            for r in fan_rows:
+                f.write(json.dumps(r) + "\\n")
 st["last_fan_ts"] = new_max_f
 
 save_state(st)
-print(f"Synced {len(sys_rows)} system + {len(fan_rows)} fan rows to sheet {SHEET_ID}")
+dest = f"sheet {SHEET_ID}" if CLOUD_READY else "SD (keys not yet configured)"
+print(f"Synced {len(sys_rows)} system + {len(fan_rows)} fan rows to {dest}")
 `,
   },
   {
@@ -2380,17 +2026,19 @@ chmod 600 /home/alon/.secrets/gdrive_share_email.txt
 # already-synced entries are never re-pushed.
 
 # ============================================================
-# GOOGLE API SETUP (Sheets / Drive / Docs) — how to actually get them
+# GOOGLE API SETUP (Sheets / Drive) — how to actually get them
 # ============================================================
-# ONE service account key (gcp_service_account.json) serves all three APIs.
-# Just enable each API you use, then reuse the same JSON key file.
+# ONE service account key serves Google Sheets and Google Drive. No Google
+# Docs API needed — all docs are saved as plain-text files on Drive.
+# Until you set up the service account, log_sync + lynis_snapshot automatically
+# fall back to SD-card storage. Set the keys up to move fully to cloud.
 #
 # Step 1 — Enable the APIs (get them here):
 #   Open https://console.cloud.google.com/ -> APIs & Services -> Library
 #   Search and ENABLE each one you need:
 #     - "Google Sheets API"     (log_sync.py)
 #     - "Google Drive API"      (lynis_snapshot.py)
-#     - "Google Docs API"       (enable now; used once we add Doc logging)
+#   (No Google Docs API — files saved as plain text on Drive.)
 #
 # Step 2 — Create a service account + download a key:
 #   IAM & Admin > Service accounts > CREATE SERVICE ACCOUNT
