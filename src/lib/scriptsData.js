@@ -928,6 +928,7 @@ import time
 import json
 import subprocess
 import requests
+import api_manager
 from datetime import datetime
 
 BOT_DIR = "/home/alon/secure-pi-bot"
@@ -1001,8 +1002,10 @@ def call_gemini(prompt_text, models, max_tokens=350):
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
         try:
+            api_manager.rate_limit("gemini")
             resp = requests.post(url, json=payload, timeout=20)
             if resp.status_code in (429, 503):
+                time.sleep(1.5)
                 continue
             resp.raise_for_status()
             text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -1190,6 +1193,10 @@ LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
 print("Flushing logs...")
 subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
 
+# Wait for any in-flight critical cloud ops (Drive/Sheets sync) before rebooting
+import api_manager
+api_manager.wait_critical()
+
 # Use systemctl reboot — goes through polkit (no sudo, no password prompt)
 result = subprocess.run(["systemctl", "reboot"], capture_output=True, text=True, timeout=10)
 if result.returncode != 0:
@@ -1225,6 +1232,10 @@ LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
 
 print("Flushing logs...")
 subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
+
+# Wait for any in-flight critical cloud ops before power off
+import api_manager
+api_manager.wait_critical()
 
 # Use systemctl poweroff — goes through polkit (no sudo, no password prompt)
 result = subprocess.run(["systemctl", "poweroff"], capture_output=True, text=True, timeout=10)
@@ -1534,6 +1545,7 @@ if [ -f "$UPDATES_LOCK" ]; then
     log "Reboot: SKIPPED (updates paused — no reboot needed)"
     echo "Reboot: PAUSED" >> "$QUEUE"
 else
+    python3 -c "import sys; sys.path.insert(0,'/home/alon/secure-pi-bot/scripts'); import api_manager; api_manager.wait_critical()"
     log "Rebooting in 60s."
     shutdown -r +1 "Scheduled Maintenance Reboot" >> "$LOG_FILE" 2>&1
 fi
@@ -1615,6 +1627,9 @@ fi
 # Sync RAM logs to Google Sheets every 30 min (replaces SD-card flush)
 */30 * * * * python3 /home/alon/secure-pi-bot/scripts/log_sync.py
 
+# Drain SD-card outage buffer -> cloud (retries failed API calls every 5 min)
+*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/outage_drain.py
+
 # Weekly report every Monday 09:00
 0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 
@@ -1647,6 +1662,7 @@ except ImportError:
     sys.exit(1)
 
 import requests as httpreq
+import api_manager
 
 KEY_FILE = "/home/alon/.secrets/gcp_service_account.json"
 SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
@@ -1665,10 +1681,7 @@ CREDS = service_account.Credentials.from_service_account_file(KEY_FILE, scopes=S
 _LAST = [0.0]
 
 def drive(method, url, **kw):
-    now = time.monotonic()
-    if now - _LAST[0] < 0.25:
-        time.sleep(0.25 - (now - _LAST[0]))
-    _LAST[0] = time.monotonic()
+    api_manager.rate_limit("gdrive")
     if not CREDS.valid or CREDS.expired:
         CREDS.refresh(gauth_requests.Request())
     headers = {"Authorization": f"Bearer {CREDS.token}"}
@@ -1736,7 +1749,9 @@ r = drive("POST",
           "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
           files=multipart)
 if r.status_code not in (200, 201):
-    print(f"FAILURE: Drive upload {r.status_code}: {r.text[:500]}"); sys.exit(1)
+    api_manager.queue_outage("gdrive", "upload", {"fname": fname, "body": body})
+    print(f"FAILURE: Drive upload {r.status_code} ({r.text[:200]}) — queued to outage buffer for retry.")
+    sys.exit(1)
 file_id = r.json()["id"]
 
 # --- Share with user email (if configured) so you can read the file ---
@@ -1757,6 +1772,225 @@ print(f"Lynis {('changed' if snaps else 'baseline')} -> uploaded {fname} to Driv
 `,
   },
   {
+    id: "api-manager",
+    filename: "api_manager.py",
+    path: "~/secure-pi-bot/scripts/api_manager.py",
+    description: "Cross-script API coordinator shared by every script that calls an external API. rate_limit(provider) serializes calls across processes via flock on /dev/shm, so two scripts hitting the same provider near-simultaneously never exceed that provider's per-second budget. critical_op() holds a shutdown-sensitive lock that restart/shutdown/maintenance wait on before rebooting. queue_outage()/drain_outage() write pending payloads to an SD-card buffer when a cloud call fails, so outage_drain.py replays them later. Also a small with_retry() backoff helper.",
+    tags: ["api", "ratelimit", "outage", "shutdown", "shared"],
+    code: `import os
+import time
+import json
+import fcntl
+import contextlib
+
+SHM = "/dev/shm/pi-bot"
+MGR_LOCK = f"{SHM}/.api_manager.lock"
+CRITICAL_LOCK = f"{SHM}/.critical_ops.lock"
+OUTAGE_DIR = "/home/alon/secure-pi-bot/outage"
+
+os.makedirs(SHM, exist_ok=True)
+os.makedirs(OUTAGE_DIR, exist_ok=True)
+
+# Min seconds between consecutive calls to each provider (enforced across
+# every process that imports this module).
+API_LIMITS = {"gemini": 1.0, "gsheets": 0.4, "gdrive": 0.25}
+
+
+def rate_limit(provider, min_gap=None):
+    """Serialize a call across processes so two scripts firing the same
+    provider near-simultaneously stay under its per-second budget."""
+    gap = min_gap if min_gap is not None else API_LIMITS.get(provider, 0.25)
+    stamp = f"{SHM}/.api_last_{provider}"
+    lockf = open(MGR_LOCK, "a")
+    fcntl.flock(lockf, fcntl.LOCK_EX)
+    try:
+        last = 0.0
+        try:
+            with open(stamp) as f:
+                last = float(f.read().strip() or "0")
+        except (OSError, ValueError):
+            pass
+        wait = gap - (time.time() - last)
+        if wait > 0:
+            time.sleep(wait)
+        with open(stamp, "w") as f:
+            f.write(str(time.time()))
+    finally:
+        fcntl.flock(lockf, fcntl.LOCK_UN)
+        lockf.close()
+
+
+@contextlib.contextmanager
+def critical_op():
+    """Lock held while a shutdown-sensitive operation runs. restart /
+    shutdown / maintenance call wait_critical() before rebooting so an
+    in-flight log sync or Drive upload finishes first."""
+    lockf = open(CRITICAL_LOCK, "a")
+    fcntl.flock(lockf, fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        fcntl.flock(lockf, fcntl.LOCK_UN)
+        lockf.close()
+
+
+def wait_critical(max_wait=60):
+    """Block until no script holds the critical-op lock, or max_wait passes.
+    True = lock was free, False = timed out (proceed anyway)."""
+    deadline = time.time() + max_wait
+    lockf = open(CRITICAL_LOCK, "a")
+    while time.time() < deadline:
+        try:
+            fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lockf, fcntl.LOCK_UN)
+            return True
+        except BlockingIOError:
+            time.sleep(2)
+    return False
+
+
+def queue_outage(provider, kind, payload):
+    """Append a pending item to the SD-card outage buffer for later retry."""
+    with open(f"{OUTAGE_DIR}/{provider}.jsonl", "a") as f:
+        f.write(json.dumps({"kind": kind, "payload": payload, "ts": time.time()}) + "\\n")
+
+
+def drain_outage(provider, handle):
+    """Replay each buffered item through handle(item)->bool. Successful items
+    are removed; failures stay queued. Returns count drained."""
+    path = f"{OUTAGE_DIR}/{provider}.jsonl"
+    if not os.path.exists(path):
+        return 0
+    lockf = open(MGR_LOCK, "a")
+    fcntl.flock(lockf, fcntl.LOCK_EX)
+    try:
+        items = []
+        with open(path) as f:
+            for ln in f:
+                ln = ln.strip()
+                if ln:
+                    try:
+                        items.append(json.loads(ln))
+                    except json.JSONDecodeError:
+                        continue
+        remaining, drained = [], 0
+        for it in items:
+            try:
+                if handle(it):
+                    drained += 1
+                    continue
+            except Exception:
+                pass
+            remaining.append(it)
+        with open(path, "w") as f:
+            for it in remaining:
+                f.write(json.dumps(it) + "\\n")
+        return drained
+    finally:
+        fcntl.flock(lockf, fcntl.LOCK_UN)
+        lockf.close()
+
+
+def with_retry(fn, retries=3, base=1.0):
+    """Call fn with exponential backoff; raises the last exception on failure."""
+    last = None
+    for i in range(retries):
+        try:
+            return fn()
+        except Exception as e:
+            last = e
+            if i < retries - 1:
+                time.sleep(base * (2 ** i))
+    raise last
+`,
+  },
+  {
+    id: "outage-drain",
+    filename: "outage_drain.py",
+    path: "~/secure-pi-bot/scripts/outage_drain.py",
+    description: "Every 5 min cron. Replays the SD-card outage buffers: re-appends queued Sheets rows and re-uploads queued Drive files, sharing each new Drive file with your email. Successful items are removed from the buffer; failures stay queued for the next run. Only runs when providers are reachable.",
+    tags: ["outage", "gsheets", "gdrive", "cron"],
+    code: `import os, sys, json
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import api_manager
+
+try:
+    import gspread
+    from google.oauth2 import service_account
+    from google.auth.transport import requests as gauth_requests
+    import requests as httpreq
+except ImportError as e:
+    print(f"FAILURE: {e} (pip3 install --user gspread google-auth)")
+    sys.exit(1)
+
+KEY = "/home/alon/.secrets/gcp_service_account.json"
+SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
+SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
+
+def _drive_token():
+    creds = service_account.Credentials.from_service_account_file(
+        KEY, scopes=["https://www.googleapis.com/auth/drive.file"])
+    if not creds.valid or creds.expired:
+        creds.refresh(gauth_requests.Request())
+    return creds.token
+
+def _share(file_id):
+    if not os.path.exists(SHARE_EMAIL_FILE):
+        return
+    email = open(SHARE_EMAIL_FILE).read().strip()
+    if not email:
+        return
+    api_manager.rate_limit("gdrive")
+    try:
+        httpreq.request("POST",
+            f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
+            headers={"Authorization": f"Bearer {_drive_token()}"},
+            json={"type": "user", "emailAddress": email, "role": "reader"},
+            timeout=30)
+    except Exception:
+        pass
+
+# --- Sheets: re-append queued rows ---
+def handle_sheets(item):
+    p = item["payload"]
+    try:
+        api_manager.rate_limit("gsheets")
+        gc = gspread.service_account(filename=KEY)
+        sh = gc.open_by_key(open(SHEET_ID_FILE).read().strip())
+        try:
+            ws = sh.worksheet(p["ws"])
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(p["ws"], rows=1, cols=len(p["rows"][0]) + 2)
+        ws.append_rows(p["rows"], value_input_option="RAW")
+        return True
+    except Exception:
+        return False
+
+# --- Drive: re-upload queued files ---
+def handle_drive(item):
+    p = item["payload"]
+    try:
+        meta = {"name": p["fname"], "mimeType": "text/plain"}
+        api_manager.rate_limit("gdrive")
+        r = httpreq.request("POST",
+            "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+            headers={"Authorization": f"Bearer {_drive_token()}"},
+            files={"metadata": ("meta", json.dumps(meta), "application/json; charset=UTF-8"),
+                   "file": ("file", p["body"], "text/plain")},
+            timeout=30)
+        if r.status_code in (200, 201):
+            _share(r.json()["id"])
+            return True
+        return False
+    except Exception:
+        return False
+
+d1 = api_manager.drain_outage("gsheets", handle_sheets)
+d2 = api_manager.drain_outage("gdrive", handle_drive)
+print(f"Drained from outage buffer: {d1} sheets + {d2} drive items.")
+`,
+  },
+  {
     id: "log-sync",
     filename: "log_sync.py",
     path: "~/secure-pi-bot/scripts/log_sync.py",
@@ -1773,6 +2007,7 @@ except ImportError:
     sys.exit(1)
 
 SHM_DIR = "/dev/shm/pi-bot"
+import api_manager
 SYS_LOG = f"{SHM_DIR}/system_log.jsonl"
 FAN_LOG = f"{SHM_DIR}/fan_events.jsonl"
 STATE_FILE = f"{SHM_DIR}/.log_sync_state.json"
@@ -1839,7 +2074,12 @@ for line in read_lines(SYS_LOG):
         if ts > new_max:
             new_max = ts
 if sys_rows:
-    sys_ws.append_rows(sys_rows, value_input_option="RAW")
+    api_manager.rate_limit("gsheets")
+    try:
+        with api_manager.critical_op():
+            sys_ws.append_rows(sys_rows, value_input_option="RAW")
+    except Exception:
+        api_manager.queue_outage("gsheets", "rows", {"ws": "System Log", "rows": sys_rows})
 st["last_sys_ts"] = new_max
 
 # --- Fan events (delta by timestamp) ---
@@ -1858,7 +2098,12 @@ for line in read_lines(FAN_LOG):
         if ts > new_max_f:
             new_max_f = ts
 if fan_rows:
-    fan_ws.append_rows(fan_rows, value_input_option="RAW")
+    api_manager.rate_limit("gsheets")
+    try:
+        with api_manager.critical_op():
+            fan_ws.append_rows(fan_rows, value_input_option="RAW")
+    except Exception:
+        api_manager.queue_outage("gsheets", "rows", {"ws": "Fan Events", "rows": fan_rows})
 st["last_fan_ts"] = new_max_f
 
 save_state(st)
@@ -1972,6 +2217,49 @@ chmod 600 /home/alon/.secrets/gdrive_share_email.txt
 # already-synced entries are never re-pushed.
 
 # ============================================================
+# GOOGLE API SETUP (Sheets / Drive / Docs) — how to actually get them
+# ============================================================
+# ONE service account key (gcp_service_account.json) serves all three APIs.
+# Just enable each API you use, then reuse the same JSON key file.
+#
+# Step 1 — Enable the APIs (get them here):
+#   Open https://console.cloud.google.com/ -> APIs & Services -> Library
+#   Search and ENABLE each one you need:
+#     - "Google Sheets API"     (log_sync.py)
+#     - "Google Drive API"      (lynis_snapshot.py)
+#     - "Google Docs API"       (enable now; used once we add Doc logging)
+#
+# Step 2 — Create a service account + download a key:
+#   IAM & Admin > Service accounts > CREATE SERVICE ACCOUNT
+#     (any name, no project roles required)
+#   Open the new account > KEYS tab > ADD KEY > Create new key > JSON > Download
+#   Copy the downloaded JSON to:
+      /home/alon/.secrets/gcp_service_account.json
+chmod 600 /home/alon/.secrets/gcp_service_account.json
+#   The file's "client_email" field is what you must share things with below.
+#
+# Step 3 — Sheets (log_sync.py): connect a spreadsheet
+#   - Create a spreadsheet in Google Drive.
+#   - Click Share and add the service account's client_email as Editor.
+#   - Grab the sheet ID from its URL: docs.google.com/spreadsheets/d/<SHEET_ID>/edit
+#   - Save it:
+echo 'YOUR_SHEET_ID_HERE' > /home/alon/.secrets/gsheets_log_id.txt
+chmod 600 /home/alon/.secrets/gsheets_log_id.txt
+#
+# Step 4 — Drive (lynis_snapshot.py): where your files land
+#   The script uploads into the SERVICE ACCOUNT'S own Drive (invisible to you
+#   by default), then shares each file with your reading email. Put that
+#   email here so the files appear in your "Shared with me":
+echo 'your_email@gmail.com' > /home/alon/.secrets/gdrive_share_email.txt
+chmod 600 /home/alon/.secrets/gdrive_share_email.txt
+#
+# Step 5 — Outage buffer (automatic SD-card fallback)
+#   When Drive/Sheets are down, failed entries are queued to:
+#     /home/alon/secure-pi-bot/outage/<provider>.jsonl
+#   outage_drain.py (cron, every 5 min) replays them once the API is reachable.
+#   No setup needed — the directory is auto-created by api_manager.py.
+
+# ============================================================
 # CRONTAB
 # ============================================================
 crontab - << 'EOF'
@@ -1979,6 +2267,7 @@ crontab - << 'EOF'
 */10 * * * * python3 /home/alon/secure-pi-bot/scripts/system_logger.py
 * * * * * python3 /home/alon/secure-pi-bot/scripts/fan_logger.py
 */30 * * * * python3 /home/alon/secure-pi-bot/scripts/log_sync.py
+*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/outage_drain.py
 0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 0 3 * * * /usr/local/bin/pi-maintenance.sh >> /dev/shm/pi-bot/maintenance_cron.log 2>&1
 0 4 * * 0 python3 /home/alon/secure-pi-bot/scripts/lynis_snapshot.py
