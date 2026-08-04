@@ -1442,10 +1442,10 @@ elif not want_restricted and is_restricted:
     id: "maintenance",
     filename: "pi-maintenance.sh",
     path: "/usr/local/bin/pi-maintenance.sh",
-    description: "Thermal-gated nightly maintenance. Daily: compress logs, AdGuard, apt update+autoremove, service check, reboot. Sunday: + full-upgrade + audit. Waits for cooldown between heavy steps, low CPU/IO priority via nice/ionice.",
-    tags: ["maintenance", "bash", "cron", "thermal"],
+    description: "Full nightly maintenance — runs the COMPLETE cycle every night (flush logs, AdGuard, apt update+full-upgrade+autoremove, audit, service check, reboot). Heat is controlled by capping all CPU cores to 600 MHz / powersave for the whole window + nice/ionice + thermal gates between steps. Nothing is skipped.",
+    tags: ["maintenance", "bash", "cron", "thermal", "throttled"],
     code: `#!/bin/bash
-# Master Maintenance Script — thermal-gated, throttled
+# Master Maintenance Script — full nightly, CPU-throttled to stay cool
 
 LOG_FILE="/var/log/pi-maintenance.log"
 QUEUE="/home/alon/scripts/logs/ntfy_queue.txt"
@@ -1458,10 +1458,10 @@ mkdir -p /home/alon/scripts/logs
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; }
 
-# --- Thermal gate settings (temp in milli-degrees) ---
+# --- Thermal gate (temp in milli-degrees) ---
 TEMP_ZONE="/sys/class/thermal/thermal_zone0/temp"
-COOL_BELOW=58000     # consider cool under 58C
-MAX_WAIT_SEC=1200    # cap thermal wait at 20 min/step
+COOL_BELOW=55000     # wait until under 55C between steps
+MAX_WAIT_SEC=1800    # cap per-step thermal wait at 30 min
 
 cur_temp() { cat "$TEMP_ZONE" 2>/dev/null || echo 0; }
 
@@ -1478,17 +1478,27 @@ wait_for_cool() {
     log "Thermal gate: max wait reached, proceeding anyway"
 }
 
-# Heavy OS ops run with low CPU + IO priority — smaller heat spikes
+# --- CPU throttle: cap ALL cores to 600 MHz / powersave for the whole window.
+# THIS is how heat is kept down — NOT by skipping work. Everything still runs.
+# Reboot at the end resets clocks; profile_scheduler (cron) restores governor.
+throttle_cpu() {
+    for core in 0 1 2 3; do
+        echo powersave > /sys/devices/system/cpu/cpu$core/cpufreq/scaling_governor 2>/dev/null
+        echo 600000   > /sys/devices/system/cpu/cpu$core/cpufreq/scaling_max_freq 2>/dev/null
+    done
+    log "CPU throttled to 600 MHz / powersave"
+}
+
+# Lowest CPU + idle-IO priority. apt told to keep old conffiles so full-upgrade
+# never blocks on an interactive prompt during the automated run.
 NICE="nice -n 19 ionice -c 3"
+APT_OPTS="-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef -o Acquire::Retries=3"
 
-# Sunday = 0; heavy work only on Sunday, light cycle other nights
-DOW=$(date +%w)
-IS_SUNDAY=$([ "$DOW" = "0" ] && echo yes || echo no)
-
-log "--- MAINTENANCE START ($IS_SUNDAY == sunday) ---"
+log "--- MAINTENANCE START (full nightly, throttled) ---"
 echo "--- Pi Report ($(date '+%Y-%m-%d')) ---" > "$QUEUE"
 
-# 0. Flush RAM logs to disk before anything restarts
+# 0. Throttle CPU + flush RAM logs
+throttle_cpu
 log "Flushing RAM logs..."
 python3 /home/alon/secure-pi-bot/scripts/compress_logs.py >> "$LOG_FILE" 2>&1
 wait_for_cool
@@ -1498,39 +1508,27 @@ log "AdGuard upgrade..."
 /opt/AdGuardHome/AdGuardHome -s upgrade >> "$LOG_FILE" 2>&1
 wait_for_cool
 
-# 2. OS Updates — apt update every night; full-upgrade only on Sunday
+# 2. OS Updates — full cycle EVERY night, throttled
 log "apt update..."
 $NICE apt-get update -y >> "$LOG_FILE" 2>&1
-
-if [ "$IS_SUNDAY" = "yes" ]; then
-    wait_for_cool
-    log "apt full-upgrade (Sunday heavy cycle)..."
-    $NICE apt-get full-upgrade -y >> "$LOG_FILE" 2>&1
-    wait_for_cool
-    log "apt autoremove..."
-    $NICE apt-get autoremove -y >> "$LOG_FILE" 2>&1
-    echo "OS Updates: FULL (weekly)" >> "$QUEUE"
-else
-    log "apt autoremove (light cycle)..."
-    $NICE apt-get autoremove -y >> "$LOG_FILE" 2>&1
-    echo "OS Updates: light (apt update only; full Sun)" >> "$QUEUE"
-fi
+wait_for_cool
+log "apt full-upgrade (throttled, auto-resolve conffiles)..."
+$NICE apt-get $APT_OPTS full-upgrade -y >> "$LOG_FILE" 2>&1
+wait_for_cool
+log "apt autoremove..."
+$NICE apt-get $APT_OPTS autoremove -y >> "$LOG_FILE" 2>&1
+echo "OS Updates: FULL (throttled, nightly)" >> "$QUEUE"
 
 mkdir -p /home/alon/.secrets
 date '+%Y-%m-%d %H:%M:%S' > /home/alon/.secrets/last_upgrade.txt
 chown alon:alon /home/alon/.secrets/last_upgrade.txt
 wait_for_cool
 
-# 3. Security Audit — Sunday only
-if [ "$IS_SUNDAY" = "yes" ]; then
-    log "Security audit (weekly)..."
-    /usr/local/bin/pi-audit.sh >> "$LOG_FILE" 2>&1
-    echo "Audit: COMPLETED (weekly)" >> "$QUEUE"
-    wait_for_cool
-else
-    log "SKIPPING audit (light night)"
-    echo "Audit: SKIPPED (Sunday only)" >> "$QUEUE"
-fi
+# 3. Security Audit — every night, throttled
+log "Security audit..."
+$NICE /usr/local/bin/pi-audit.sh >> "$LOG_FILE" 2>&1
+echo "Audit: COMPLETED (nightly)" >> "$QUEUE"
+wait_for_cool
 
 # 4. Service Health
 FAILED=$(systemctl list-units --state=failed --no-legend --plain | grep -v clamav | awk '{print $1}')
@@ -1545,7 +1543,7 @@ fi
 sync
 /usr/local/bin/ntfy-queue.sh >> "$LOG_FILE" 2>&1
 
-# 6. Reboot
+# 6. Reboot (resets CPU clocks; profile_scheduler restores governor within 1 min)
 log "Rebooting in 60s."
 shutdown -r +1 "Scheduled Maintenance Reboot" >> "$LOG_FILE" 2>&1
 `,
