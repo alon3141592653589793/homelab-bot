@@ -272,9 +272,11 @@ async def handle_reactive_command(client, message):
     elif raw.lower().startswith("/aidebug "):
         rest = raw[9:].strip()
         if rest:
-            await run_script(message, "ai_debug.py", "Thinking...", args=rest.split(" ", 1) if rest.startswith("gemini-") else [rest])
+            # Tokens are passed individually so the script can consume model
+            # and on-demand tool prefixes (e.g. "gemini-3.5-flash lynis")
+            await run_script(message, "ai_debug.py", "Thinking...", args=rest.split())
         else:
-            await message.channel.send("Usage: /aidebug <question>\\nOptional: /aidebug gemini-3.5-flash <question>")
+            await message.channel.send("Usage: /aidebug <question>\\nOptional prefixes: /aidebug [gemini-3.5-flash] [lynis] <question>")
 
     elif content == "/help":
         await message.channel.send(
@@ -763,119 +765,22 @@ with open(RAM_LOG, "w") as f:
     id: "compress-logs",
     filename: "compress_logs.py",
     path: "~/secure-pi-bot/scripts/compress_logs.py",
-    description: "Called before reboot. Compresses RAM system log to disk (averages stable blocks, keeps spikes). Flushes fan log. Streaming, low RAM use.",
+    description: "Called before reboot. Triggers log_sync.py to flush RAM logs to Google Sheets (NO SD writes). Thin wrapper — syncing logic lives in log_sync.py.",
     tags: ["logging", "compression", "maintenance"],
     code: `import os
-import json
+import subprocess
 
-RAM_SYSTEM_LOG = "/dev/shm/pi-bot/system_log.jsonl"
-RAM_FAN_LOG = "/dev/shm/pi-bot/fan_events.jsonl"
-DISK_SYSTEM_LOG = "/home/alon/secure-pi-bot/logs/system_log.jsonl"
-DISK_FAN_LOG = "/home/alon/secure-pi-bot/logs/fan_events.jsonl"
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
-os.makedirs("/home/alon/secure-pi-bot/logs", exist_ok=True)
-
-def flush_fan_log():
-    if not os.path.exists(RAM_FAN_LOG):
-        return 0
-    # Load existing timestamps from disk to avoid duplicates
-    existing_ts = set()
-    if os.path.exists(DISK_FAN_LOG):
-        with open(DISK_FAN_LOG) as f:
-            for line in f:
-                try:
-                    existing_ts.add(json.loads(line)["ts"])
-                except Exception:
-                    pass
-    count = 0
-    with open(DISK_FAN_LOG, "a") as out:
-        with open(RAM_FAN_LOG) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    e = json.loads(line)
-                    if e["ts"] not in existing_ts:
-                        out.write(line + "\\n")
-                        count += 1
-                except Exception:
-                    pass
-    return count
-
-def compress_system_log():
-    if not os.path.exists(RAM_SYSTEM_LOG):
-        return 0, 0
-
-    def flush_group(g):
-        if not g:
-            return None
-        temps = [e["temp_c"] for e in g if e.get("temp_c") is not None]
-        rams = [e["ram_pct"] for e in g if e.get("ram_pct") is not None]
-        failed = list({f for e in g for f in e.get("failed", [])})
-        block = {
-            "ts_start": g[0]["ts"],
-            "ts_end": g[-1]["ts"],
-            "temp_avg_c": round(sum(temps) / len(temps), 1) if temps else None,
-            "ram_avg_pct": round(sum(rams) / len(rams), 1) if rams else None,
-            "samples": len(g),
-        }
-        if failed:
-            block["failed"] = failed
-        return block
-
-    # Stream through RAM log, compress on the fly
-    in_count = 0
-    out_blocks = []
-    group = []
-    prev_temp = None
-
-    with open(RAM_SYSTEM_LOG) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            in_count += 1
-
-            is_spike = e.get("spike", False)
-            has_failed = bool(e.get("failed"))
-            temp_changed = abs((e.get("temp_c") or 0) - (prev_temp or 0)) >= 3.0 if prev_temp else False
-
-            if is_spike:
-                b = flush_group(group)
-                if b:
-                    out_blocks.append(b)
-                group = []
-                spike = dict(e)
-                spike["spike_flag"] = True
-                out_blocks.append(spike)
-            elif has_failed or temp_changed:
-                b = flush_group(group)
-                if b:
-                    out_blocks.append(b)
-                group = [e]
-            else:
-                group.append(e)
-
-            prev_temp = e.get("temp_c")
-
-    b = flush_group(group)
-    if b:
-        out_blocks.append(b)
-
-    with open(DISK_SYSTEM_LOG, "a") as out:
-        for block in out_blocks:
-            out.write(json.dumps(block) + "\\n")
-
-    return in_count, len(out_blocks)
-
-fan_count = flush_fan_log()
-in_c, out_c = compress_system_log()
-print(f"Logs flushed: {fan_count} fan events | system log {in_c} -> {out_c} blocks")
+# Before reboot — flush any unsynced RAM logs to Google Sheets (NO SD writes).
+# Delta-sync + service-account auth live in log_sync.py.
+r = subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "log_sync.py")],
+                   capture_output=True, text=True, timeout=120)
+out = (r.stdout or "").strip()
+err = (r.stderr or "").strip()
+if err:
+    print(f"Log sync warning: {err}")
+print(out or "Logs synced to Google Sheets.")
 `,
   },
   {
@@ -1063,12 +968,22 @@ except OSError:
 os.makedirs("/dev/shm/pi-bot", exist_ok=True)
 
 # Parse args — --auto skips rate limit (used by automated service alerts)
+# On-demand heavy tools (slow) are pulled in ONLY when prefixed before the
+# question, e.g. "/aidebug lynis why is ssh weak?". Default calls keep them
+# out of context so the AI isn't flooded with irrelevant data.
+ON_DEMAND_TOOLS = {
+    "lynis": ["lynis", "audit", "system", "--quick", "--no-colors"],
+}
 args = sys.argv[1:]
 is_auto = "--auto" in args
 args = [a for a in args if a != "--auto"]
 custom_model = None
 if args and "gemini" in args[0].lower():
     custom_model = args[0]
+    args = args[1:]
+requested_tools = []
+while args and args[0].lower() in ON_DEMAND_TOOLS:
+    requested_tools.append(args[0].lower())
     args = args[1:]
 prompt = " ".join(args).strip() or "Automatic service failure diagnosis"
 models_to_try = [custom_model] if custom_model else MODEL_PRIORITY
@@ -1174,8 +1089,6 @@ SAFE_COMMANDS = [
     # --- System info ---
     ["uname", "-a"],
     ["uptime"],
-    # --- Security audit (read-only input for diagnostics) ---
-    ["lynis", "audit", "system", "--quick"],
     # --- Cron & schedules ---
     ["crontab", "-l"],
     # --- Bot-specific state ---
@@ -1190,6 +1103,17 @@ for cmd in SAFE_COMMANDS:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
         collected[label] = (r.stdout or r.stderr or "(empty)").strip()[:500]
+    except Exception as e:
+        collected[label] = f"(err: {e})"
+
+# On-demand heavy tools — only run when explicitly prefixed by the user
+# (e.g. /aidebug lynis <q>). Keeps default /aidebug fast and context lean.
+for tool_name in requested_tools:
+    cmd = ON_DEMAND_TOOLS[tool_name]
+    label = " ".join(cmd)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        collected[label] = (r.stdout or r.stderr or "(empty)").strip()[:6000]
     except Exception as e:
         collected[label] = f"(err: {e})"
 
@@ -1696,11 +1620,123 @@ fi
 # Fan event logger every minute (instant exit if /dev/shm/pi-bot missing)
 * * * * * python3 /home/alon/secure-pi-bot/scripts/fan_logger.py
 
+# Sync RAM logs to Google Sheets every 30 min (replaces SD-card flush)
+*/30 * * * * python3 /home/alon/secure-pi-bot/scripts/log_sync.py
+
 # Weekly report every Monday 09:00
 0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 
 # Nightly maintenance + reboot 03:00 (compress_logs runs inside)
 0 3 * * * /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1
+`,
+  },
+  {
+    id: "log-sync",
+    filename: "log_sync.py",
+    path: "~/secure-pi-bot/scripts/log_sync.py",
+    description: "Syncs RAM logs (system_log + fan_events) to Google Sheets via a GCP service account. Delta-sync by timestamp so RAM rotation is safe (already-synced entries never re-pushed). Called every 30 min (cron) and at reboot (compress_logs.py). Replaces all SD-card log flushes.",
+    tags: ["logging", "gsheets", "sync", "ram"],
+    code: `import os
+import sys
+import json
+
+try:
+    import gspread
+except ImportError:
+    print("FAILURE: gspread missing. pip3 install --user gspread", file=sys.stderr)
+    sys.exit(1)
+
+SHM_DIR = "/dev/shm/pi-bot"
+SYS_LOG = f"{SHM_DIR}/system_log.jsonl"
+FAN_LOG = f"{SHM_DIR}/fan_events.jsonl"
+STATE_FILE = f"{SHM_DIR}/.log_sync_state.json"
+KEY_FILE = "/home/alon/.secrets/gcp_service_account.json"
+SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
+
+for p in (KEY_FILE, SHEET_ID_FILE):
+    if not os.path.exists(p):
+        print(f"FAILURE: {p} not found (see setup notes)", file=sys.stderr)
+        sys.exit(1)
+
+SHEET_ID = open(SHEET_ID_FILE).read().strip()
+gc = gspread.service_account(filename=KEY_FILE)
+sh = gc.open_by_key(SHEET_ID)
+
+def ensure_sheet(title, headers):
+    try:
+        return sh.worksheet(title)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title, rows=1, cols=len(headers))
+        ws.append_row(headers)
+        return ws
+
+def load_state():
+    default = {"last_sys_ts": "", "last_fan_ts": ""}
+    try:
+        with open(STATE_FILE) as f:
+            return {**default, **json.load(f)}
+    except (OSError, json.JSONDecodeError):
+        return default
+
+def save_state(st):
+    with open(STATE_FILE, "w") as f:
+        json.dump(st, f)
+
+def read_lines(path):
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return [l.strip() for l in f if l.strip()]
+
+# --- System log (delta by timestamp — rotation-safe) ---
+st = load_state()
+sys_ws = ensure_sheet("System Log", ["ts", "temp_c", "ram_pct", "ram_warning", "disk_spike", "spike", "failed"])
+last_sys = st["last_sys_ts"]
+sys_rows = []
+new_max = last_sys
+for line in read_lines(SYS_LOG):
+    try:
+        e = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    ts = e.get("ts") or e.get("ts_start") or ""
+    if ts and (not last_sys or ts > last_sys):
+        sys_rows.append([
+            ts,
+            e.get("temp_c") if e.get("temp_c") is not None else e.get("temp_avg_c", ""),
+            e.get("ram_pct") if e.get("ram_pct") is not None else e.get("ram_avg_pct", ""),
+            "Y" if e.get("ram_warning") else "",
+            "Y" if e.get("disk_spike") else "",
+            "Y" if (e.get("spike") or e.get("spike_flag")) else "",
+            ",".join(e.get("failed", [])),
+        ])
+        if ts > new_max:
+            new_max = ts
+if sys_rows:
+    sys_ws.append_rows(sys_rows, value_input_option="RAW")
+st["last_sys_ts"] = new_max
+
+# --- Fan events (delta by timestamp) ---
+fan_ws = ensure_sheet("Fan Events", ["ts", "event", "note"])
+last_fan = st["last_fan_ts"]
+fan_rows = []
+new_max_f = last_fan
+for line in read_lines(FAN_LOG):
+    try:
+        e = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    ts = e.get("ts", "")
+    if ts and (not last_fan or ts > last_fan):
+        fan_rows.append([ts, e.get("event", ""), e.get("note", "")])
+        if ts > new_max_f:
+            new_max_f = ts
+if fan_rows:
+    fan_ws.append_rows(fan_rows, value_input_option="RAW")
+st["last_fan_ts"] = new_max_f
+
+save_state(st)
+print(f"Synced {len(sys_rows)} system + {len(fan_rows)} fan rows to sheet {SHEET_ID}")
 `,
   },
   {
@@ -1772,7 +1808,32 @@ touch /home/alon/secure-pi-bot/.logging_enabled
 # ============================================================
 # PYTHON DEPENDENCIES
 # ============================================================
-pip3 install --user requests psutil python-dotenv
+pip3 install --user requests psutil python-dotenv gspread
+
+# ============================================================
+# GOOGLE SHEETS LOG SYNC (replaces SD-card log flush)
+# ============================================================
+# RAM logs (system_log + fan_events) are synced to a Google Sheet by
+# log_sync.py every 30 min and at reboot via compress_logs.py.
+# NO project logs touch the SD card anymore.
+#
+# 1. Google Cloud Console: enable "Google Sheets API", create a service
+#    account, add a JSON key, download it, and place at:
+mkdir -p /home/alon/.secrets
+#    (upload the JSON as) /home/alon/.secrets/gcp_service_account.json
+chmod 600 /home/alon/.secrets/gcp_service_account.json
+chmod 700 /home/alon/.secrets
+#
+# 2. Create a Google Sheet in Drive, share it with the service account's
+#    email (Editor). Put the sheet ID (from its URL) into a file:
+echo 'YOUR_SHEET_ID_HERE' > /home/alon/.secrets/gsheets_log_id.txt
+chmod 600 /home/alon/.secrets/gsheets_log_id.txt
+#
+# log_sync.py auto-creates two worksheets inside that sheet:
+#   "System Log"  -> ts, temp_c, ram_pct, warnings, spikes, failed
+#   "Fan Events"  -> ts, event, note
+# Delta-sync by timestamp, so RAM rotation is safe:
+# already-synced entries are never re-pushed.
 
 # ============================================================
 # CRONTAB
@@ -1781,6 +1842,7 @@ crontab - << 'EOF'
 * * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
 */10 * * * * python3 /home/alon/secure-pi-bot/scripts/system_logger.py
 * * * * * python3 /home/alon/secure-pi-bot/scripts/fan_logger.py
+*/30 * * * * python3 /home/alon/secure-pi-bot/scripts/log_sync.py
 0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 0 3 * * * /usr/local/bin/pi-maintenance.sh >> /var/log/pi-maintenance.log 2>&1
 EOF
