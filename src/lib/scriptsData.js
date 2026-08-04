@@ -255,6 +255,17 @@ async def handle_reactive_command(client, message):
         except Exception as e:
             await message.channel.send(f"Error: {e}")
 
+    elif content == "/updates stop":
+        open("/home/alon/secure-pi-bot/.updates_disabled", "w").close()
+        await message.channel.send("Automatic updates PAUSED. Tonight's maintenance will skip apt upgrade + reboot (logs, audit, and service-check still run). /updates start to resume.")
+
+    elif content == "/updates start":
+        try:
+            os.remove("/home/alon/secure-pi-bot/.updates_disabled")
+        except FileNotFoundError:
+            pass
+        await message.channel.send("Automatic updates RESUMED. Next maintenance at 03:00 will run apt upgrade + reboot as normal.")
+
     elif raw.lower().startswith("/aidebug "):
         rest = raw[9:].strip()
         if rest:
@@ -277,6 +288,7 @@ async def handle_reactive_command(client, message):
             "/profile              - Show CPU performance profile\\n"
             "/setprofile restricted|unlimited  - Switch CPU profile\\n"
             "/fastfetch            - Run fastfetch\\n"
+            "/updates start|stop   - Pause or resume automatic apt upgrade + reboot\\n"
             "/aidebug <question>   - Conversational AI diagnostic\\n"
             "/help                 - This message"
         )
@@ -1442,7 +1454,7 @@ elif not want_restricted and is_restricted:
     id: "maintenance",
     filename: "pi-maintenance.sh",
     path: "/usr/local/bin/pi-maintenance.sh",
-    description: "Full nightly maintenance — runs the COMPLETE cycle every night (flush logs, AdGuard, apt update+full-upgrade+autoremove, audit, service check, reboot). Heat is controlled by capping all CPU cores to 600 MHz / powersave for the whole window + nice/ionice + thermal gates between steps. Nothing is skipped.",
+    description: "Full nightly maintenance — flush logs, AdGuard, apt update+full-upgrade+autoremove, audit, service check, reboot (throttled to 600 MHz/powersave + nice/ionice + thermal gates between steps). apt+reboot is skipped when .updates_disabled is set via /updates stop, but logs/audit/service-check still run.",
     tags: ["maintenance", "bash", "cron", "thermal", "throttled"],
     code: `#!/bin/bash
 # Master Maintenance Script — full nightly, CPU-throttled to stay cool
@@ -1508,20 +1520,27 @@ log "AdGuard upgrade..."
 /opt/AdGuardHome/AdGuardHome -s upgrade >> "$LOG_FILE" 2>&1
 wait_for_cool
 
-# 2. OS Updates — full cycle EVERY night, throttled
-log "apt update..."
-$NICE apt-get update -y >> "$LOG_FILE" 2>&1
-wait_for_cool
-log "apt full-upgrade (throttled, auto-resolve conffiles)..."
-$NICE apt-get $APT_OPTS full-upgrade -y >> "$LOG_FILE" 2>&1
-wait_for_cool
-log "apt autoremove..."
-$NICE apt-get $APT_OPTS autoremove -y >> "$LOG_FILE" 2>&1
-echo "OS Updates: FULL (throttled, nightly)" >> "$QUEUE"
+UPDATES_LOCK="/home/alon/secure-pi-bot/.updates_disabled"
 
-mkdir -p /home/alon/.secrets
-date '+%Y-%m-%d %H:%M:%S' > /home/alon/.secrets/last_upgrade.txt
-chown alon:alon /home/alon/.secrets/last_upgrade.txt
+# 2. OS Updates — full cycle, throttled (skipped if /updates stop was run)
+if [ -f "$UPDATES_LOCK" ]; then
+    log "OS Updates: SKIPPED (.updates_disabled set)"
+    echo "OS Updates: PAUSED" >> "$QUEUE"
+else
+    log "apt update..."
+    $NICE apt-get update -y >> "$LOG_FILE" 2>&1
+    wait_for_cool
+    log "apt full-upgrade (throttled, auto-resolve conffiles)..."
+    $NICE apt-get $APT_OPTS full-upgrade -y >> "$LOG_FILE" 2>&1
+    wait_for_cool
+    log "apt autoremove..."
+    $NICE apt-get $APT_OPTS autoremove -y >> "$LOG_FILE" 2>&1
+    echo "OS Updates: FULL (throttled, nightly)" >> "$QUEUE"
+
+    mkdir -p /home/alon/.secrets
+    date '+%Y-%m-%d %H:%M:%S' > /home/alon/.secrets/last_upgrade.txt
+    chown alon:alon /home/alon/.secrets/last_upgrade.txt
+fi
 wait_for_cool
 
 # 3. Security Audit — every night, throttled
@@ -1543,9 +1562,14 @@ fi
 sync
 /usr/local/bin/ntfy-queue.sh >> "$LOG_FILE" 2>&1
 
-# 6. Reboot (resets CPU clocks; profile_scheduler restores governor within 1 min)
-log "Rebooting in 60s."
-shutdown -r +1 "Scheduled Maintenance Reboot" >> "$LOG_FILE" 2>&1
+# 6. Reboot — only when updates ran (resets CPU clocks; profile_scheduler restores governor within 1 min)
+if [ -f "$UPDATES_LOCK" ]; then
+    log "Reboot: SKIPPED (updates paused — no reboot needed)"
+    echo "Reboot: PAUSED" >> "$QUEUE"
+else
+    log "Rebooting in 60s."
+    shutdown -r +1 "Scheduled Maintenance Reboot" >> "$LOG_FILE" 2>&1
+fi
 `,
   },
   {

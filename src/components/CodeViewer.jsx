@@ -14,22 +14,30 @@ export default function CodeViewer({ script }) {
     setTimeout(() => setCopied(false), 2000);
   }, [script.code]);
 
+  const isCrontab = script?.filename === "crontab.txt";
+
   const handleCmdCopy = useCallback(async () => {
-    const bytes = new TextEncoder().encode(script.code);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    let cmd;
+    if (isCrontab) {
+      // crontab.txt is applied via `crontab -`, not written to a file
+      cmd = `crontab << 'CRONTAB_EOF'\n${script.code}\nCRONTAB_EOF`;
+    } else {
+      const bytes = new TextEncoder().encode(script.code);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const b64 = btoa(binary);
+      const needsSudo = script.path && (script.path.startsWith('/usr/') || script.path.startsWith('/etc/') || script.path.startsWith('/opt/'));
+      // Use heredoc to avoid single-quote breakage in the base64 payload
+      cmd = needsSudo
+        ? `base64 -d << 'B64EOF' | sudo tee ${script.path} > /dev/null\n${b64}\nB64EOF`
+        : `base64 -d << 'B64EOF' > ${script.path}\n${b64}\nB64EOF`;
     }
-    const b64 = btoa(binary);
-    const needsSudo = script.path && (script.path.startsWith('/usr/') || script.path.startsWith('/etc/') || script.path.startsWith('/opt/'));
-    // Use heredoc to avoid single-quote breakage in the base64 payload
-    const cmd = needsSudo
-      ? `base64 -d << 'B64EOF' | sudo tee ${script.path} > /dev/null\n${b64}\nB64EOF`
-      : `base64 -d << 'B64EOF' > ${script.path}\n${b64}\nB64EOF`;
     await navigator.clipboard.writeText(cmd);
     setCmdCopied(true);
     setTimeout(() => setCmdCopied(false), 2000);
-  }, [script]);
+  }, [script, isCrontab]);
 
   if (!script) {
     return (
@@ -63,11 +71,11 @@ export default function CodeViewer({ script }) {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {/* Override command button */}
-          {script.path && script.path !== null && (
+          {/* Override command button (or Apply crontab for crontab.txt) */}
+          {(script.path || isCrontab) && (
             <button
               onClick={handleCmdCopy}
-              title="Copy shell override command (cat > file heredoc)"
+              title={isCrontab ? "Copy crontab apply command (crontab heredoc)" : "Copy shell override command (base64 heredoc)"}
               className={cn(
                 "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-mono transition-all",
                 "border border-[#30363d]",
@@ -84,7 +92,7 @@ export default function CodeViewer({ script }) {
               ) : (
                 <>
                   <Terminal className="w-4 h-4" />
-                  <span className="hidden sm:inline">Override cmd</span>
+                  <span className="hidden sm:inline">{isCrontab ? "Apply crontab" : "Override cmd"}</span>
                 </>
               )}
             </button>
