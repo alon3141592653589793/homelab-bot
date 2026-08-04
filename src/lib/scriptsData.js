@@ -92,6 +92,13 @@ async def passive_thermal_monitor():
                     f"Current: {temp:.1f}C (Threshold: {ALERT_THRESHOLD:.1f}C)\\n"
                     f"Run /cooldown to reduce heat."
                 )
+                # Auto-trigger AI diagnosis on overheat (fire-and-forget)
+                ai_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "ai_debug.py")
+                await asyncio.create_subprocess_exec(
+                    "python3", "-u", ai_script, "--auto-error",
+                    f"Overheat: core temp {temp:.1f}C breached threshold {ALERT_THRESHOLD:.1f}C. Diagnose heat sources and suggest cooldown.",
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+                )
     
     # --- Failed services check (alerts on NEW failures + recoveries) ---
     current_failed = set()
@@ -128,7 +135,7 @@ async def passive_thermal_monitor():
             script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "ai_debug.py")
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "python3", "-u", script_path, "--auto", auto_prompt,
+                    "python3", "-u", script_path, "--auto-error", auto_prompt,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
@@ -276,7 +283,7 @@ async def handle_reactive_command(client, message):
             # and on-demand tool prefixes (e.g. "gemini-3.5-flash lynis")
             await run_script(message, "ai_debug.py", "Thinking...", args=rest.split())
         else:
-            await message.channel.send("Usage: /aidebug <question>\\nOptional prefixes: /aidebug [gemini-3.5-flash] [lynis] <question>")
+            await message.channel.send("Usage: /aidebug <question>\\nOptional model prefix: /aidebug [gemini-2.5-flash] <question>")
 
     elif content == "/help":
         await message.channel.send(
@@ -920,8 +927,8 @@ print("Weekly report sent.")
     id: "ai-debug",
     filename: "ai_debug.py",
     path: "~/secure-pi-bot/scripts/ai_debug.py",
-    description: "Conversational AI diagnostic. Remembers context within session. After 20min silence, summarizes conversation to log. Reads Pi state via hardcoded read-only commands.",
-    tags: ["ai", "debug", "gemini", "diagnostic", "conversation"],
+    description: "Token-efficient, context-aware Pi diagnostic assistant. MANUAL (/aidebug <q>): AI sees only auto-detected red flags (errors, failed services, high RAM/temp/disk/load) then may call get_info(source) for any read-only diagnostic on demand. AUDIT (--audit, weekly cron): all info sources run minified (df/free/ps stripped of tmpfs/loop/heavy procs; tables -> key-value) with Lynis in a separate second pass. AUTO-ERROR (thermal/failed-service triggers): focused pass then a broadened pass to see if extra info changes the conclusion. Read-only whitelist only (no sudo, no writes). Settings-cat limited to a hardcoded non-sensitive allowlist. Rate limit in RAM (300s manual). API key from ~/.secrets/gemini_key. Auto/audit modes self-post to REPORT_CHANNEL_ID.",
+    tags: ["ai", "debug", "gemini", "tool-calling", "minified", "audit"],
     code: `import os
 import sys
 import time
@@ -931,25 +938,25 @@ import requests
 import api_manager
 from datetime import datetime
 
-BOT_DIR = "/home/alon/secure-pi-bot"
-RATE_LIMIT_FILE = "/dev/shm/pi-bot/.ai_rate"
-RATE_LIMIT_SECS = 10
-CONV_FILE = "/dev/shm/pi-bot/.ai_conversation.json"
-SUMMARY_LOG = "/dev/shm/pi-bot/ai_summary_log.jsonl"
-SILENCE_THRESHOLD = 20 * 60
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
-MODEL_PRIORITY = [
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
-    "gemini-3.1-pro",
-    "gemini-3-flash",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-]
+BOT_DIR = "/home/alon/secure-pi-bot"
+SHM = "/dev/shm/pi-bot"
+RATE_FILE = f"{SHM}/.ai_rate"
+CONV_FILE = f"{SHM}/.ai_conversation.json"
+SUMMARY_LOG = f"{SHM}/ai_summary_log.jsonl"
+RATE_WINDOW = 300            # manual /aidebug cooldown (RAM-backed)
+SILENCE = 20 * 60            # idle time before conversation is summarized+cleared
+REPORT_CHANNEL_ID = 1524756593651224706
+
+os.makedirs(SHM, exist_ok=True)
 
 from dotenv import load_dotenv
 load_dotenv(f"{BOT_DIR}/.env")
-
+DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 try:
     with open("/home/alon/.secrets/gemini_key") as f:
         GEMINI_KEY = f.read().strip()
@@ -957,203 +964,356 @@ except OSError:
     print("FAILURE: /home/alon/.secrets/gemini_key not found.")
     sys.exit(1)
 
-os.makedirs("/dev/shm/pi-bot", exist_ok=True)
+MODEL_PRIORITY = [
+    "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro",
+    "gemini-3-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+]
 
-# Parse args — --auto skips rate limit (used by automated service alerts)
-# On-demand heavy tools (slow) are pulled in ONLY when prefixed before the
-# question, e.g. "/aidebug lynis why is ssh weak?". Default calls keep them
-# out of context so the AI isn't flooded with irrelevant data.
-ON_DEMAND_TOOLS = {
-    "lynis": ["lynis", "audit", "system", "--quick", "--no-colors"],
-}
+# ---- Mode parse ----
 args = sys.argv[1:]
-is_auto = "--auto" in args
-args = [a for a in args if a != "--auto"]
+mode = "manual"
 custom_model = None
-if args and "gemini" in args[0].lower():
-    custom_model = args[0]
-    args = args[1:]
-requested_tools = []
-while args and args[0].lower() in ON_DEMAND_TOOLS:
-    requested_tools.append(args[0].lower())
-    args = args[1:]
-prompt = " ".join(args).strip() or "Automatic service failure diagnosis"
-models_to_try = [custom_model] if custom_model else MODEL_PRIORITY
+if args and args[0].lower().startswith("gemini"):
+    custom_model = args[0]; args = args[1:]
+if "--audit" in args:
+    mode = "audit"; args = [a for a in args if a != "--audit"]
+elif "--auto-error" in args:
+    mode = "auto-error"; args = [a for a in args if a != "--auto-error"]
+elif "--auto" in args:
+    mode = "auto"; args = [a for a in args if a != "--auto"]
+prompt = " ".join(args).strip()
+if not prompt:
+    prompt = {"manual":"Automatic diagnostic","auto":"Automatic diagnostic",
+              "auto-error":"Automatic error diagnosis","audit":"Weekly scheduled audit"}[mode]
+MODELS = [custom_model] if custom_model else MODEL_PRIORITY
+AUTO_MODE = mode in ("auto", "audit", "auto-error")
 
-# Minimal rate limit — prevents accidental double-fire only (skip for --auto)
+# ---- Rate limit (skip for auto/audit) ----
 now = time.time()
-if not is_auto:
+if not AUTO_MODE:
     try:
-        with open(RATE_LIMIT_FILE) as f:
+        with open(RATE_FILE) as f:
             last = float(f.read().strip() or "0")
-        if now - last < RATE_LIMIT_SECS:
-            print(f"Wait {int(RATE_LIMIT_SECS - (now - last))}s between commands.")
+        if now - last < RATE_WINDOW:
+            print(f"Wait {int(RATE_WINDOW - (now - last))}s between /aidebug calls.")
             sys.exit(0)
-    except OSError:
+    except (OSError, ValueError):
         pass
-    with open(RATE_LIMIT_FILE, "w") as f:
+    with open(RATE_FILE, "w") as f:
         f.write(str(now))
 
-def call_gemini(prompt_text, models, max_tokens=350):
-    payload = {
-        "contents": [{"parts": [{"text": prompt_text}]}],
-        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}
-    }
+# ---- Minifiers ----
+def _mhz(s):
+    try:
+        return f"{int(s)//1000} MHz"
+    except ValueError:
+        return s
+
+def _throttled(s):
+    v = s.split("=")[-1].strip()
+    try:
+        code = int(v, 0)
+    except ValueError:
+        return s
+    flags = []
+    if code & 0x1: flags.append("under-voltage")
+    if code & 0x2: flags.append("freq-capped")
+    if code & 0x4: flags.append("throttled")
+    if code & 0x10000: flags.append("was under-voltage")
+    if code & 0x20000: flags.append("was freq-capped")
+    if code & 0x40000: flags.append("was throttled")
+    return "Throttled: " + (", ".join(flags) if flags else "no")
+
+def minify_disk(s):
+    rows = []
+    for line in s.splitlines():
+        p = line.split()
+        if len(p) < 6 or p[0].startswith(("tmpfs", "devtmpfs", "overlay", "loop")):
+            continue
+        rows.append(f"{p[5]} {p[4]} used ({p[2]}/{p[1]}, {p[3]} free)")
+    return "; ".join(rows) or "n/a"
+
+def minify_mem(s):
+    out = {}
+    for line in s.splitlines():
+        p = line.split()
+        if p and p[0] == "Mem:" and len(p) >= 4:
+            out["RAM"] = f"{p[2]}/{p[1]} used"
+        elif p and p[0] == "Swap:" and len(p) >= 4:
+            out["Swap"] = f"{p[2]}/{p[1]}"
+    return "; ".join(f"{k}:{v}" for k, v in out.items()) or "n/a"
+
+def minify_ps(s):
+    rows = []
+    for line in s.splitlines():
+        p = line.split()
+        if len(p) < 4:
+            continue
+        try:
+            cpu = float(p[2]); mem = float(p[3])
+        except ValueError:
+            continue
+        if cpu >= 10 or mem >= 5:
+            rows.append(f"{p[1]}({p[0]}) {cpu}%cpu {mem}%mem")
+    return "; ".join(rows) or "no heavy procs"
+
+def minify_ip(s):
+    rows = []
+    for line in s.splitlines():
+        if " inet " in line:
+            rows.append(line.strip().split("inet ")[1].split()[0])
+    return "; ".join(rows) or "n/a"
+
+def minify_ss(s):
+    rows = []
+    for line in s.splitlines():
+        p = line.split()
+        if len(p) >= 5 and p[0] == "LISTEN":
+            rows.append(f"{p[3]} {p[4]}")
+    return "; ".join(rows) or "no listeners"
+
+INFO = {
+    "system_status": (["systemctl", "is-system-running"], None),
+    "running_services": (["systemctl", "list-units", "--type=service", "--state=running", "--no-legend"],
+                         lambda s: "; ".join(l.split()[0] for l in s.splitlines() if l.strip())[:1500]),
+    "timers": (["systemctl", "list-timers", "--all", "--no-legend"], None),
+    "temp": (["vcgencmd", "measure_temp"], None),
+    "throttled": (["vcgencmd", "get_throttled"], _throttled),
+    "clock_arm": (["vcgencmd", "measure_clock", "arm"], None),
+    "clock_core": (["vcgencmd", "measure_clock", "core"], None),
+    "cpu_freq": (["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"], _mhz),
+    "cpu_gov": (["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"], None),
+    "memory": (["free", "-h"], minify_mem),
+    "disk": (["df", "-h"], minify_disk),
+    "load": (["cat", "/proc/loadavg"], None),
+    "processes": (["ps", "-eo", "pid,comm,%cpu,%mem", "--sort=-%cpu", "--no-header"], minify_ps),
+    "network": (["ip", "addr", "show"], minify_ip),
+    "routes": (["ip", "route", "show"], None),
+    "listening": (["ss", "-tln"], minify_ss),
+    "uname": (["uname", "-a"], None),
+    "uptime": (["uptime"], None),
+    "crontab": (["crontab", "-l"], None),
+    "bot_state": (["ls", "-la", "/dev/shm/pi-bot/"], None),
+    "journal_errors": (["journalctl", "-p", "err", "-n", "20", "--no-pager"], None),
+    "kernel": (["dmesg", "-T", "--level=err,warn", "-n", "15"], None),
+    "lynis": (["lynis", "audit", "system", "--quick", "--no-colors"], "heavy"),
+}
+
+# Non-sensitive settings files the AI may read (curated; never secrets/env).
+SAFE_SETTINGS = {
+    "maintenance_script": "/usr/local/bin/pi-maintenance.sh",
+    "audit_script": "/usr/local/bin/pi-audit.sh",
+    "polkit_rules": "/etc/polkit-1/rules.d/49-pi-bot.rules",
+    "udev_rules": "/etc/udev/rules.d/99-cpufreq.rules",
+}
+
+TOOL_NAMES = sorted(list(INFO.keys()) + list(SAFE_SETTINGS.keys()))
+
+def fetch_source(src):
+    if src in SAFE_SETTINGS:
+        try:
+            with open(SAFE_SETTINGS[src]) as f:
+                return f.read()[:6000]
+        except OSError as e:
+            return f"(err: {e})"
+    info = INFO.get(src)
+    if not info:
+        return f"(unknown source: {src})"
+    cmd, m = info
+    timeout = 180 if m == "heavy" else 6
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        raw = (r.stdout or r.stderr or "(empty)").strip()
+    except Exception as e:
+        return f"(err: {e})"
+    if m == "heavy":
+        return raw[:6000]
+    if callable(m):
+        return m(raw)
+    return raw[:1200]
+
+def red_flags():
+    flags = []
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            t = int(f.read()) / 1000.0
+        if t >= 70: flags.append(f"HIGH TEMP {t:.1f}C")
+        elif t >= 60: flags.append(f"WARM {t:.1f}C")
+        else: flags.append(f"temp {t:.1f}C")
+    except OSError:
+        pass
+    if psutil:
+        vm = psutil.virtual_memory()
+        if vm.percent >= 90: flags.append(f"HIGH RAM {vm.percent:.0f}%")
+        elif vm.percent >= 80: flags.append(f"ELEVATED RAM {vm.percent:.0f}%")
+        for part in psutil.disk_partitions(all=False):
+            if part.fstype == "tmpfs" or part.device.startswith("/dev/loop"):
+                continue
+            try:
+                u = psutil.disk_usage(part.mountpoint)
+            except OSError:
+                continue
+            if u.percent >= 90:
+                flags.append(f"HIGH DISK {part.mountpoint} {u.percent:.0f}%")
+    try:
+        la = os.getloadavg()[0]
+        cores = os.cpu_count() or 4
+        if la > cores * 0.8:
+            flags.append(f"HIGH LOAD {la:.2f}/{cores}c")
+    except OSError:
+        pass
+    try:
+        r = subprocess.run(["systemctl", "list-units", "--state=failed", "--no-legend", "--plain"],
+                            capture_output=True, text=True, timeout=5)
+        fams = [l.split()[0] for l in r.stdout.splitlines() if l.strip() and "clamav" not in l.split()[0]]
+        if fams:
+            flags.append("FAILED: " + " ".join(fams))
+    except Exception:
+        pass
+    return flags
+
+def build_context(audit):
+    r = red_flags()
+    out = ["RED FLAGS: " + (" | ".join(r) if r else "none")]
+    if audit:
+        out.append("FULL SYSTEM INFO (minified):")
+        for name in INFO:
+            if name == "lynis":
+                continue
+            out.append(f"$ {name}\\n{fetch_source(name)}")
+    return "\\n".join(out)
+
+# ---- Gemini call + tool loop ----
+TOOL_DECL = [{"name": "get_info",
+              "description": "Fetch a read-only diagnostic source (system metric, command output, or a curated non-sensitive settings file) by name. Call only when you need more detail than the context already gives.",
+              "parameters": {"type": "object",
+                             "properties": {"source": {"type": "string", "enum": TOOL_NAMES}},
+                             "required": ["source"]}}]
+TOOLS = [{"functionDeclarations": TOOL_DECL}]
+
+def call_gemini(contents, models, tools=True, max_tokens=800):
     for model in models:
+        payload = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}}
+        if tools:
+            payload["tools"] = TOOLS
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
         try:
             api_manager.rate_limit("gemini")
-            resp = requests.post(url, json=payload, timeout=20)
+            resp = requests.post(url, json=payload, timeout=60)
             if resp.status_code in (429, 503):
-                time.sleep(1.5)
+                time.sleep(1.5); continue
+            if resp.status_code == 400 and tools:
                 continue
             resp.raise_for_status()
-            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-            return text, model
+            return resp.json(), model
         except Exception:
             continue
     return None, None
 
-# === Conversation management ===
-def load_conversation():
+def gemini_text(prompt_text, models, max_tokens=300):
+    resp, m = call_gemini([{"role": "user", "parts": [{"text": prompt_text}]}], models, tools=False, max_tokens=max_tokens)
+    if not resp:
+        return None, m
+    parts = resp.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    return "".join(p.get("text", "") for p in parts if "text" in p).strip(), m
+
+def diag_loop(context, question, models, max_rounds=4, tools=True):
+    contents = [{"role": "user", "parts": [{"text": f"{question}\\n\\nContext:\\n{context}\\n\\nAs the Pi diagnostic assistant, give a concise diagnosis citing exact values. Call get_info(source) only if you need more detail."}]}]
+    used = None
+    for _ in range(max_rounds):
+        resp, used = call_gemini(contents, models, tools=tools)
+        if not resp:
+            if tools:
+                return diag_loop(context, question, models, max_rounds=1, tools=False)
+            return None, used
+        parts = resp.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        fn = [p for p in parts if "functionCall" in p]
+        if not fn:
+            return "".join(p.get("text", "") for p in parts if "text" in p).strip(), used
+        contents.append({"role": "model", "parts": parts})
+        fr = []
+        for p in fn:
+            if p["functionCall"]["name"] == "get_info":
+                src = p["functionCall"].get("args", {}).get("source", "")
+                fr.append({"functionResponse": {"name": "get_info", "response": {"source": src, "result": fetch_source(src)}}})
+        contents.append({"role": "user", "parts": fr})
+    return None, used
+
+# ---- Conversation memory (manual mode) ----
+def load_conv():
     try:
         with open(CONV_FILE) as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
-        return {"messages": [], "last_activity": 0}
+        return {"messages": [], "last": 0}
 
-def save_conversation(conv):
+def save_conv(c):
     with open(CONV_FILE, "w") as f:
-        json.dump(conv, f)
+        json.dump(c, f)
 
-conversation = load_conversation()
+def post_discord(text):
+    if not DISCORD_TOKEN:
+        return
+    for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
+        try:
+            requests.post(f"https://discord.com/api/v10/channels/{REPORT_CHANNEL_ID}/messages",
+                          headers={"Authorization": f"Bot {DISCORD_TOKEN}"}, json={"content": chunk}, timeout=10)
+        except Exception:
+            pass
 
-# If 20+ min of silence, summarize and clear previous conversation
-if conversation["messages"] and (now - conversation.get("last_activity", 0)) > SILENCE_THRESHOLD:
-    conv_text = ""
-    for msg in conversation["messages"]:
-        role = "User" if msg["role"] == "user" else "AI"
-        conv_text += f"{role}: {msg['text'][:300]}\\n"
-    summary_prompt = (
-        "Summarize this Raspberry Pi diagnostic conversation. "
-        "Include key findings, issues found, and recommendations. Max 600 chars.\\n\\n"
-        f"{conv_text}"
-    )
-    summary, _ = call_gemini(summary_prompt, MODEL_PRIORITY, max_tokens=200)
-    if summary:
-        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
-        entry = {"ts": datetime.now().isoformat(timespec="seconds"), "summary": summary, "messages": len(conversation["messages"])}
-        with open(SUMMARY_LOG, "a") as f:
-            f.write(json.dumps(entry) + "\\n")
-        print(f"📝 **Conversation Summary** [{datetime.now().strftime('%H:%M')}]\\n{summary}\\n\\n--- New conversation ---\\n\\n")
-    conversation = {"messages": [], "last_activity": 0}
+ts = datetime.now().strftime("%H:%M")
+final_text = None
+used_model = None
 
-# === READ-ONLY WHITELIST — no sudo, no writes, no shell=True ===
-# The AI NEVER decides what commands run. This list is hardcoded in Python.
-# subprocess.run() with a list (not a string) makes shell injection impossible.
-# The AI only receives the TEXT OUTPUT of these commands — it cannot execute anything.
-# All commands are read-only: query, list, cat, measure, show. None modify the system.
-SAFE_COMMANDS = [
-    # --- Service health ---
-    ["systemctl", "is-system-running"],
-    ["systemctl", "list-units", "--state=failed", "--no-legend"],
-    ["systemctl", "list-units", "--type=service", "--state=running", "--no-legend"],
-    ["systemctl", "list-timers", "--all", "--no-legend"],
-    # --- Logs & kernel messages ---
-    ["journalctl", "-p", "err", "-n", "20", "--no-pager"],
-    ["dmesg", "-T", "--level=err,warn", "-n", "15"],
-    # --- CPU & hardware ---
-    ["vcgencmd", "measure_temp"],
-    ["vcgencmd", "get_throttled"],
-    ["vcgencmd", "measure_clock", "arm"],
-    ["vcgencmd", "measure_clock", "core"],
-    ["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"],
-    ["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"],
-    ["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"],
-    # --- Memory & disk ---
-    ["free", "-h"],
-    ["df", "-h", "--output=source,size,used,avail,pcent,target"],
-    ["cat", "/proc/loadavg"],
-    # --- Processes ---
-    ["ps", "-eo", "pid,comm,%cpu,%mem", "--sort=-%cpu", "--no-header"],
-    # --- Network ---
-    ["ip", "addr", "show"],
-    ["ip", "route", "show"],
-    ["ss", "-tln"],
-    # --- System info ---
-    ["uname", "-a"],
-    ["uptime"],
-    # --- Cron & schedules ---
-    ["crontab", "-l"],
-    # --- Bot-specific state ---
-    ["ls", "-la", "/dev/shm/pi-bot/"],
-    ["wc", "-l", "/dev/shm/pi-bot/system_log.jsonl", "/dev/shm/pi-bot/fan_events.jsonl"],
-    ["du", "-sh", "/home/alon/secure-pi-bot/logs/"],
-]
+if mode == "manual":
+    conv = load_conv()
+    if conv["messages"] and (now - conv.get("last", 0)) > SILENCE:
+        ct = "".join(f"{'U' if m['role']=='user' else 'A'}: {m['text'][:300]}\\n" for m in conv["messages"])
+        summ, _ = gemini_text(f"Summarize this Pi diagnostic chat in <300 chars:\\n{ct}", MODELS)
+        if summ:
+            with open(SUMMARY_LOG, "a") as f:
+                f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "summary": summ, "n": len(conv["messages"])}) + "\\n")
+            print(f"Observation: previous conversation summarized -> log.\\n")
+        conv = {"messages": [], "last": 0}
+    conv_ctx = ""
+    if conv["messages"]:
+        conv_ctx = "Previous conversation:\\n"
+        for m in conv["messages"][-6:]:
+            conv_ctx += f"{'U' if m['role']=='user' else 'A'}: {m['text'][:300]}\\n"
+        conv_ctx += "\\n"
+    final_text, used_model = diag_loop(conv_ctx + build_context(audit=False), prompt, MODELS)
+    if final_text:
+        conv["messages"].append({"role": "user", "text": prompt})
+        conv["messages"].append({"role": "assistant", "text": final_text})
+        conv["last"] = time.time()
+        save_conv(conv)
 
-collected = {}
-for cmd in SAFE_COMMANDS:
-    label = " ".join(cmd)
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
-        collected[label] = (r.stdout or r.stderr or "(empty)").strip()[:500]
-    except Exception as e:
-        collected[label] = f"(err: {e})"
+elif mode == "audit":
+    context = build_context(audit=True)
+    main_review, used_model = diag_loop(context, "Weekly system audit. Summarize health, list concerns with exact values, recommend actions.", MODELS)
+    lyn = fetch_source("lynis")
+    sec_review, _ = diag_loop(f"Previous audit:\\n{main_review or ''}\\n\\nLYNIS (heavy) output:\\n{lyn}",
+                             "Given the weekly audit and this Lynis output, review security posture for the week; note whether things improved or worsened, citing specific warnings.", MODELS, max_rounds=3)
+    final_text = (main_review or "(no audit)") + "\\n\\n=== LYNIS WEEKLY REVIEW ===\\n" + (sec_review or "(no review)")
+    post_discord(f"**Weekly AI Audit** [{ts}]\\n{final_text}")
 
-# On-demand heavy tools — only run when explicitly prefixed by the user
-# (e.g. /aidebug lynis <q>). Keeps default /aidebug fast and context lean.
-for tool_name in requested_tools:
-    cmd = ON_DEMAND_TOOLS[tool_name]
-    label = " ".join(cmd)
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-        collected[label] = (r.stdout or r.stderr or "(empty)").strip()[:6000]
-    except Exception as e:
-        collected[label] = f"(err: {e})"
+elif mode == "auto":
+    final_text, used_model = diag_loop("", prompt, MODELS)
 
-system_context = "\\n\\n".join(f"$ {k}\\n{v}" for k, v in collected.items())
+elif mode == "auto-error":
+    focused = build_context(audit=False)
+    first, used_model = diag_loop(focused, f"Automatic error diagnosis. Trigger: {prompt}. Identify root cause and likely fix, citing exact values.", MODELS)
+    broad = build_context(audit=True)
+    second, _ = diag_loop(broad, f"Earlier conclusion: {first or ''}\\n\\nBroader info above. Note if anything adds to or changes your earlier conclusion. Be concise.", MODELS)
+    final_text = first or ""
+    if second:
+        final_text += "\\n\\n--- BROADENED CHECK ---\\n" + second
+    post_discord(f"**Auto-Diagnosis** [{ts}] trigger: {prompt}\\n{final_text}")
 
-# Build prompt with conversation context
-conv_context = ""
-if conversation["messages"]:
-    conv_context = "Previous conversation:\\n"
-    for msg in conversation["messages"][-6:]:
-        role = "User" if msg["role"] == "user" else "Assistant"
-        conv_context += f"{role}: {msg['text'][:300]}\\n"
-    conv_context += "\\n"
-
-gemini_prompt = (
-    f"Raspberry Pi diagnostic assistant in a conversation. "
-    f'User asks: "{prompt}"\\n\\n'
-    f"{conv_context}"
-    f"Current system state (read-only):\\n{system_context}\\n\\n"
-    "Give a concise, conversational diagnosis. You MUST reference specific command outputs you reviewed "
-    "and cite exact values you found (temps, percentages, error messages, etc). "
-    "Do NOT just say 'I ran a check' — list what each command showed. "
-    "Flag anything abnormal with the exact values. "
-    "If this is a follow-up, reference previous context naturally."
-)
-
-ai_text, used_model = call_gemini(gemini_prompt, models_to_try, max_tokens=800)
-
-if not ai_text:
-    print("FAILURE: All Gemini models failed or unavailable.")
-    sys.exit(1)
-
-# Save to conversation
-conversation["messages"].append({"role": "user", "text": prompt, "ts": datetime.now().isoformat()})
-conversation["messages"].append({"role": "assistant", "text": ai_text})
-conversation["last_activity"] = time.time()
-save_conversation(conversation)
-
-# Build compact command output for the user
-cmd_lines = []
-for cmd_label, cmd_output in collected.items():
-    short = cmd_output[:150].replace("\\n", " | ")
-    cmd_lines.append(f"  {cmd_label}: {short}")
-cmd_summary = "\\n".join(cmd_lines)
-
-print(f"**AI Debug** [{datetime.now().strftime('%H:%M')}] model: {used_model}\\n{ai_text}\\n\\n**Commands reviewed:**\\n{cmd_summary}")
+if final_text:
+    print(f"**AI Debug** [{ts}] mode={mode} model={used_model}\\n{final_text}")
+else:
+    print(f"**AI Debug** [{ts}] mode={mode} — no response (all models failed).")
 `,
   },
   {
@@ -1638,6 +1798,9 @@ fi
 
 # Weekly Lynis snapshot to Google Drive (versioned, keep last 4 + AI change-analysis)
 0 4 * * 0 python3 /home/alon/secure-pi-bot/scripts/lynis_snapshot.py
+
+# Weekly AI system audit (all info minified; Lynis in a separate pass)
+0 5 * * 0 python3 /home/alon/secure-pi-bot/scripts/ai_debug.py --audit
 `,
   },
   {
@@ -2271,6 +2434,7 @@ crontab - << 'EOF'
 0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 0 3 * * * /usr/local/bin/pi-maintenance.sh >> /dev/shm/pi-bot/maintenance_cron.log 2>&1
 0 4 * * 0 python3 /home/alon/secure-pi-bot/scripts/lynis_snapshot.py
+0 5 * * 0 python3 /home/alon/secure-pi-bot/scripts/ai_debug.py --audit
 EOF
 
 crontab -l

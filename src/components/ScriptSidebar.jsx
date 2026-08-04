@@ -12,6 +12,7 @@ const POLLING_RATES = [
   { label: "log_sync.py", rate: "every 30 min", note: "RAM logs -> Google Sheets (no SD writes)" },
   { label: "outage_drain.py", rate: "every 5 min", note: "retries failed cloud API calls from SD buffer" },
   { label: "lynis_snapshot.py", rate: "Sun 04:00", note: "versioned Lynis -> Drive (keep 4) + AI diff" },
+  { label: "ai_debug --audit", rate: "Sun 05:00", note: "weekly AI audit: all info minified + Lynis pass" },
   { label: "pi-maintenance.sh", rate: "daily 03:00", note: "flush logs + OS upgrade + reboot" },
 ];
 
