@@ -395,9 +395,18 @@ TOOL_DECL = [{"name": "get_info",
                              "required": ["service","action"]}}]
 TOOLS = [{"functionDeclarations": TOOL_DECL}]
 
-def call_gemini(contents, models, use_tools=True, web=False, max_tokens=800):
+SYS_INSTRUCT = ("You are the Pi diagnostic assistant for a Raspberry Pi home lab. "
+                "Give a concise diagnosis citing exact metric values (temps, percentages, "
+                "error strings, service names). Call get_info(source) for a read-only "
+                "diagnostic only when the provided context lacks the detail you need. "
+                "Call inspect_service(service, action) only to deep-dive a specific failed "
+                "service the context already named. Never suggest destructive actions.")
+
+def call_gemini(contents, models, use_tools=True, web=False, max_tokens=800, system=None):
     for model in models:
         payload = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}}
+        if system:
+            payload["systemInstruction"] = {"parts": [{"text": system}]}
         if web:
             payload["tools"] = [{"google_search": {}}]
         elif use_tools:
@@ -425,14 +434,14 @@ def gemini_text(prompt_text, models, max_tokens=300):
     parts = resp.get("candidates", [{}])[0].get("content", {}).get("parts", [])
     return "".join(p.get("text", "") for p in parts if "text" in p).strip(), m
 
-def diag_loop(context, question, models, max_rounds=4, tools=True):
-    contents = [{"role": "user", "parts": [{"text": f"{question}\\n\\nContext:\\n{context}\\n\\nAs the Pi diagnostic assistant, give a concise diagnosis citing exact values. Call get_info(source) only if you need more detail."}]}]
+def diag_loop(context, question, models, max_rounds=4, tools=True, system=SYS_INSTRUCT, max_tokens=800):
+    contents = [{"role": "user", "parts": [{"text": f"{question}\\n\\nContext:\\n{context}"}]}]
     used = None
     for _ in range(max_rounds):
-        resp, used = call_gemini(contents, models, use_tools=tools)
+        resp, used = call_gemini(contents, models, use_tools=tools, system=system, max_tokens=max_tokens)
         if not resp:
             if tools:
-                return diag_loop(context, question, models, max_rounds=1, tools=False)
+                return diag_loop(context, question, models, max_rounds=1, tools=False, system=system, max_tokens=max_tokens)
             return None, used
         parts = resp.get("candidates", [{}])[0].get("content", {}).get("parts", [])
         fn = [p for p in parts if "functionCall" in p]
@@ -500,7 +509,7 @@ if mode == "manual":
         for m in conv["messages"][-6:]:
             conv_ctx += f"{'U' if m['role']=='user' else 'A'}: {m['text'][:300]}\\n"
         conv_ctx += "\\n"
-    final_text, used_model = diag_loop(conv_ctx + build_context(audit=False), prompt, MODELS)
+    final_text, used_model = diag_loop(conv_ctx + build_context(audit=False), prompt, MODELS, max_tokens=600)
     if final_text:
         conv["messages"].append({"role": "user", "text": prompt})
         conv["messages"].append({"role": "assistant", "text": final_text})
@@ -509,17 +518,17 @@ if mode == "manual":
 
 elif mode == "audit":
     context = build_context(audit=True)
-    main_review, used_model = diag_loop(context, "Weekly system audit. Summarize health, list concerns with exact values, recommend actions.", MODELS)
+    main_review, used_model = diag_loop(context, "Weekly system audit. Summarize health, list concerns with exact values, recommend actions.", MODELS, max_tokens=1500)
     lyn = fetch_source("lynis")
     sec_review, _ = diag_loop(f"Previous audit:\\n{main_review or ''}\\n\\nLYNIS (heavy) output:\\n{lyn}",
-                             "Given the weekly audit and this Lynis output, review security posture for the week; note whether things improved or worsened, citing specific warnings.", MODELS, max_rounds=3)
+                             "Given the weekly audit and this Lynis output, review security posture for the week; note whether things improved or worsened, citing specific warnings.", MODELS, max_rounds=3, max_tokens=1000)
     final_text = (main_review or "(no audit)") + "\\n\\n=== LYNIS WEEKLY REVIEW ===\\n" + (sec_review or "(no review)")
     post_discord(f"**Weekly AI Audit** [{ts}]\\n{final_text}")
 
 elif mode == "auto":
     if web:
         # Web-grounded single call (used by lynis_snapshot to look up diff online).
-        resp, used_model = call_gemini([{"role": "user", "parts": [{"text": prompt}]}], MODELS, use_tools=False, web=True, max_tokens=800)
+        resp, used_model = call_gemini([{"role": "user", "parts": [{"text": prompt}]}], MODELS, use_tools=False, web=True, max_tokens=1000)
         if resp:
             parts = resp.get("candidates", [{}])[0].get("content", {}).get("parts", [])
             final_text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
@@ -528,12 +537,7 @@ elif mode == "auto":
 
 elif mode == "auto-error":
     focused = build_context(audit=False)
-    first, used_model = diag_loop(focused, f"Automatic error diagnosis. Trigger: {prompt}. Identify root cause and likely fix, citing exact values. If the trigger names a specific failed service, call inspect_service(service, 'status' or 'logs') for its details before concluding.", MODELS)
-    broad = build_context(audit=True)
-    second, _ = diag_loop(broad, f"Earlier conclusion: {first or ''}\\n\\nBroader info above. Note if anything adds to or changes your earlier conclusion. Be concise.", MODELS)
-    final_text = first or ""
-    if second:
-        final_text += "\\n\\n--- BROADENED CHECK ---\\n" + second
+    final_text, used_model = diag_loop(focused, f"Automatic error diagnosis. Trigger: {prompt}. Identify root cause and likely fix, citing exact values. If the trigger names a specific failed service, call inspect_service(service, 'status' or 'logs') for its details before concluding.", MODELS)
     post_discord(f"**Auto-Diagnosis** [{ts}] trigger: {prompt}\\n{final_text}")
 
 if final_text:
