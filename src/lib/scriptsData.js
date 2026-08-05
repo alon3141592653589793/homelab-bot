@@ -1,5 +1,6 @@
 import aiDebugEntry from "./scripts/aiDebugEntry";
 import apiFailReportEntry from "./scripts/apiFailReportEntry";
+import testAllEntry from "./scripts/testAllEntry";
 
 const scripts = [
   {
@@ -290,6 +291,9 @@ async def handle_reactive_command(client, message):
             await run_script(message, "ai_debug.py", "Thinking...", args=rest.split(), timeout=300)
         else:
             await message.channel.send("Usage: /aidebug <question>\\nOptional model prefix: /aidebug [gemini-2.5-flash] <question>")
+
+    elif content == "/testall":
+        await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
 
     elif content == "/help":
         await message.channel.send(
@@ -932,6 +936,7 @@ print("Weekly report sent.")
   },
   aiDebugEntry,
   apiFailReportEntry,
+  testAllEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
