@@ -127,6 +127,8 @@ def minify_ps(s):
         p = line.split()
         if len(p) < 4:
             continue
+        if p[1] == "ps":
+            continue  # skip the ps snapshot itself — it shows a transient self-spike
         try:
             cpu = float(p[2]); mem = float(p[3])
         except ValueError:
