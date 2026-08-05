@@ -4,6 +4,7 @@ import testAllEntry from "./scripts/testAllEntry";
 import setupEntry from "./scripts/setupEntry";
 import crontabEntry from "./scripts/crontabEntry";
 import apiManagerEntry from "./scripts/apiManagerEntry";
+import profileEntries from "./scripts/profileEntries";
 
 const scripts = [
   {
@@ -1042,171 +1043,7 @@ else:
         pass
 `,
   },
-  {
-    id: "set-profile-restricted",
-    filename: "set_profile_restricted.py",
-    path: "~/secure-pi-bot/scripts/set_profile_restricted.py",
-    description: "Restricted profile: 600 MHz, powersave. Writes sysfs directly (works if alon owns the cpufreq files via udev rule). Falls back to sudo tee only if needed.",
-    tags: ["performance", "thermal", "cpu"],
-    code: `import subprocess, sys, os
-
-GOVERNOR = "powersave"
-MAX_FREQ = "600000"
-STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
-
-def write_sysfs(path, value):
-    try:
-        with open(path, "w") as f:
-            f.write(value)
-        return True
-    except PermissionError:
-        r = subprocess.run(["sudo", "tee", path], input=value, capture_output=True, text=True)
-        if r.returncode != 0:
-            print(f"FAILED {path}: {r.stderr.strip()}")
-            sys.exit(1)
-
-for core in range(4):
-    base = f"/sys/devices/system/cpu/cpu{core}/cpufreq"
-    write_sysfs(f"{base}/scaling_governor", GOVERNOR)
-    write_sysfs(f"{base}/scaling_max_freq", MAX_FREQ)
-
-with open(STATE_FILE, "w") as f:
-    f.write("restricted")
-
-print(f"Profile: RESTRICTED | Governor: {GOVERNOR} | Max: {int(MAX_FREQ)//1000} MHz")
-`,
-  },
-  {
-    id: "set-profile-unlimited",
-    filename: "set_profile_unlimited.py",
-    path: "~/secure-pi-bot/scripts/set_profile_unlimited.py",
-    description: "Unlimited profile: 1.7 GHz, schedutil. Clears override so scheduler resumes.",
-    tags: ["performance", "cpu"],
-    code: `import subprocess, sys, os
-
-GOVERNOR = "schedutil"
-MAX_FREQ = "1700000"
-STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
-
-def write_sysfs(path, value):
-    try:
-        with open(path, "w") as f:
-            f.write(value)
-    except PermissionError:
-        r = subprocess.run(["sudo", "tee", path], input=value, capture_output=True, text=True)
-        if r.returncode != 0:
-            print(f"FAILED {path}: {r.stderr.strip()}")
-            sys.exit(1)
-
-for core in range(4):
-    base = f"/sys/devices/system/cpu/cpu{core}/cpufreq"
-    write_sysfs(f"{base}/scaling_governor", GOVERNOR)
-    write_sysfs(f"{base}/scaling_max_freq", MAX_FREQ)
-
-try:
-    os.remove(STATE_FILE)
-except FileNotFoundError:
-    pass
-
-print(f"Profile: UNLIMITED | Governor: {GOVERNOR} | Max: {int(MAX_FREQ)//1000} MHz")
-`,
-  },
-  {
-    id: "profile-status",
-    filename: "profile_status.py",
-    path: "~/secure-pi-bot/scripts/profile_status.py",
-    description: "Reports active CPU profile by reading sysfs directly.",
-    tags: ["performance", "status"],
-    code: `import os
-
-STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
-
-def sysfs(path, default="unknown"):
-    try:
-        with open(path) as f:
-            return f.read().strip()
-    except OSError:
-        return default
-
-governor = sysfs("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
-max_khz = int(sysfs("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", "0"))
-cur_khz = int(sysfs("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "0"))
-
-profile = "RESTRICTED" if max_khz <= 600000 else "UNLIMITED"
-sched = "Manual override (scheduler paused)" if os.path.exists(STATE_FILE) else "Auto-scheduler active"
-
-print(
-    f"Profile: {profile} | Governor: {governor}\\n"
-    f"Max: {max_khz//1000} MHz | Current: {cur_khz//1000} MHz\\n"
-    f"Scheduler: {sched}"
-)
-`,
-  },
-  {
-    id: "update-bot-status",
-    filename: "update_bot_status.py",
-    path: "~/secure-pi-bot/scripts/update_bot_status.py",
-    description: "Writes bot presence status to /dev/shm (RAM, not SD). main.py reads it every 4 min.",
-    tags: ["discord", "status", "performance"],
-    code: `import os, sys, json
-
-# Write to RAM — not SD card
-STATUS_FILE = "/dev/shm/pi-bot/.bot_status.json"
-STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
-
-try:
-    with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq") as f:
-        max_khz = int(f.read().strip())
-except OSError:
-    sys.exit(1)
-
-if max_khz <= 600000:
-    text = "Resting | 600 MHz | Powersave"
-else:
-    text = "Active | 1.7 GHz | Schedutil"
-
-if os.path.exists(STATE_FILE):
-    text += " (manual)"
-
-os.makedirs("/dev/shm/pi-bot", exist_ok=True)
-with open(STATUS_FILE, "w") as f:
-    json.dump({"text": text}, f)
-
-print(f"Status: {text}")
-`,
-  },
-  {
-    id: "profile-scheduler",
-    filename: "profile_scheduler.py",
-    path: "~/secure-pi-bot/scripts/profile_scheduler.py",
-    description: "Runs every minute via cron. Switches CPU profile by time. Instant exit if no change needed — minimal overhead.",
-    tags: ["performance", "scheduler", "cron"],
-    code: `import subprocess, sys, os
-from datetime import datetime
-
-STATE_FILE = "/home/alon/secure-pi-bot/.profile_override"
-SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Skip instantly if manual override active
-if os.path.exists(STATE_FILE):
-    sys.exit(0)
-
-hour = datetime.now().hour
-want_restricted = hour >= 23 or hour < 7
-
-try:
-    with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq") as f:
-        is_restricted = int(f.read()) <= 600000
-except OSError:
-    sys.exit(1)
-
-# Only act if state needs to change
-if want_restricted and not is_restricted:
-    subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "set_profile_restricted.py")], capture_output=True)
-elif not want_restricted and is_restricted:
-    subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "set_profile_unlimited.py")], capture_output=True)
-`,
-  },
+  ...profileEntries,
   {
     id: "maintenance",
     filename: "pi-maintenance.sh",
@@ -1252,11 +1089,9 @@ wait_for_cool() {
 # THIS is how heat is kept down — NOT by skipping work. Everything still runs.
 # Reboot at the end resets clocks; profile_scheduler (cron) restores governor.
 throttle_cpu() {
-    for core in 0 1 2 3; do
-        echo powersave > /sys/devices/system/cpu/cpu$core/cpufreq/scaling_governor 2>/dev/null
-        echo 600000   > /sys/devices/system/cpu/cpu$core/cpufreq/scaling_max_freq 2>/dev/null
-    done
-    log "CPU throttled to 600 MHz / powersave"
+    touch /dev/shm/pi-bot/.maintenance_throttle
+    python3 /home/alon/secure-pi-bot/scripts/cpu_profile.py throttle
+    log "CPU throttled to 600 MHz / powersave (maintenance marker set)"
 }
 
 # Lowest CPU + idle-IO priority. apt told to keep old conffiles so full-upgrade
@@ -1335,6 +1170,10 @@ else
     log "Rebooting in 60s."
     shutdown -r +1 "Scheduled Maintenance Reboot" >> "$LOG_FILE" 2>&1
 fi
+
+# Release the maintenance throttle marker so the profile scheduler restores
+# the normal profile (on Sun, /dev/shm also clears on reboot — belt+braces).
+rm -f /dev/shm/pi-bot/.maintenance_throttle
 `,
   },
   {
@@ -1405,7 +1244,7 @@ import glob
 import subprocess
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 try:
     from google.oauth2 import service_account
@@ -1440,16 +1279,16 @@ def drive(method, url, **kw):
     return r
 
 def normalize_lynis(text):
-    # Strip "long execution: N.N seconds" timing warnings — they vary every
-    # run even when nothing on the system changed, so a no-change rerun
-    # must NOT be saved as a new Drive version. Score, warnings, suggestions,
-    # and all findings are kept.
-    out = []
-    for line in text.splitlines():
-        if "had a long execution:" in line and "seconds" in line:
-            continue
-        out.append(line)
-    return "\\n".join(out)
+    # Allowlist (not denylist) the substantive lines so a no-change rerun
+    # hashes identical. Allowlists survive Lynis format shifts far better
+    # than chasing each volatile line. If a new Lynis version changes its
+    # layout and the allowlist matches nothing, the small-fingerprint guard
+    # below catches it instead of silently minting a bogus 'changed' version.
+    def substantive(s):
+        return (s.startswith("W:") or s.startswith("S:")
+                or "Hardening index" in s or "Tests performed" in s)
+    kept = sorted(s for s in (ln.strip() for ln in text.splitlines()) if substantive(s))
+    return "\\n".join(kept)
 
 try:
     r = subprocess.run(["lynis", "audit", "system", "--no-colors"],
@@ -1500,6 +1339,15 @@ def _extract_output(body):
     raw = pre[nl + 1:] if nl != -1 else pre
     return raw.rstrip("\\n")
 
+_norm = normalize_lynis(output)
+if len(_norm.splitlines()) < 5:
+    msg = (f"Lynis normalizer produced only {len(_norm.splitlines())} substantive lines "
+           "(<5 expected) — allowlist likely needs updating for a new Lynis version. "
+           "No new snapshot saved.")
+    post_discord(f"**Lynis normalizer warning** [{ts}]\\n{msg}")
+    print(msg)
+    sys.exit(1)
+
 if not DRIVE_READY:
     files = sorted(glob.glob(f"{LOG_DIR}/{PREFIX}*.txt"))
     prev_body = open(files[-1]).read() if files else None
@@ -1533,6 +1381,9 @@ def download_text(fid):
     return r.text if r.status_code == 200 else ""
 
 snaps = list_snapshots()
+_recent = [s for s in snaps if s.get("createdTime", "") >= (datetime.now() - timedelta(days=30)).isoformat()]
+if len(_recent) > 5:
+    post_discord(f"**Lynis sanity warning** [{ts}] {len(_recent)} Lynis versions created in the last 30 days (>5 expected at a weekly cadence) — normalizer likely needs updating.")
 if snaps:
     prev = download_text(snaps[0]["id"])
     prev_raw = _extract_output(prev)
