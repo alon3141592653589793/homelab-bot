@@ -142,7 +142,7 @@ async def passive_thermal_monitor():
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
                 output = stdout.decode().strip()
                 if output:
                     if len(output) > 1900:
@@ -287,7 +287,7 @@ async def handle_reactive_command(client, message):
         if rest:
             # Tokens are passed individually so the script can consume model
             # and on-demand tool prefixes (e.g. "gemini-3.5-flash lynis")
-            await run_script(message, "ai_debug.py", "Thinking...", args=rest.split())
+            await run_script(message, "ai_debug.py", "Thinking...", args=rest.split(), timeout=300)
         else:
             await message.channel.send("Usage: /aidebug <question>\\nOptional model prefix: /aidebug [gemini-2.5-flash] <question>")
 
@@ -1015,6 +1015,7 @@ api_manager.wait_critical()
 
 # Use systemctl poweroff — goes through polkit (no sudo, no password prompt)
 result = subprocess.run(["systemctl", "poweroff"], capture_output=True, text=True, timeout=10)
+if result.returncode != 0:
     err = result.stderr.strip() or result.stdout.strip() or "unknown error"
     print(f"FAILED to power off: {err}")
     try:
@@ -1507,13 +1508,21 @@ def post_discord(text):
             pass
 
 # --- SD-card fallback (until service-account key is configured) ---
+def _extract_output(body):
+    marker = "\\n=== AI CHANGE ANALYSIS ==="
+    pre = body.split(marker)[0]
+    nl = pre.find("\\n")
+    raw = pre[nl + 1:] if nl != -1 else pre
+    return raw.rstrip("\\n")
+
 if not DRIVE_READY:
     files = sorted(glob.glob(f"{LOG_DIR}/{PREFIX}*.txt"))
-    prev = open(files[-1]).read() if files else None
-    if prev and hashlib.sha256(prev.encode()).hexdigest() == digest:
+    prev_body = open(files[-1]).read() if files else None
+    prev_raw = _extract_output(prev_body) if prev_body else None
+    if prev_raw and hashlib.sha256(prev_raw.encode()).hexdigest() == digest:
         print("Lynis unchanged (SD fallback — no new version).")
         sys.exit(0)
-    analysis = "(baseline run — first snapshot)" if not prev else run_ai_diff(prev, output)
+    analysis = "(baseline run — first snapshot)" if not prev_raw else run_ai_diff(prev_raw, output)
     body = f"=== LYNIS SNAPSHOT {ts} ===\\n{output}\\n\\n=== AI CHANGE ANALYSIS ===\\n{analysis}\\n"
     with open(os.path.join(LOG_DIR, fname), "w") as f:
         f.write(body)
@@ -1541,10 +1550,11 @@ def download_text(fid):
 snaps = list_snapshots()
 if snaps:
     prev = download_text(snaps[0]["id"])
-    if hashlib.sha256(prev.encode()).hexdigest() == digest:
+    prev_raw = _extract_output(prev)
+    if hashlib.sha256(prev_raw.encode()).hexdigest() == digest:
         print(f"Lynis unchanged — no new version. ({len(snaps)} snapshots on Drive.)")
         sys.exit(0)
-    analysis = run_ai_diff(prev, output)
+    analysis = run_ai_diff(prev_raw, output)
 else:
     analysis = "(baseline run — first snapshot on Drive, nothing to diff against)"
 
