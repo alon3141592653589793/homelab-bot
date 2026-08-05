@@ -273,14 +273,14 @@ async def handle_reactive_command(client, message):
 
     elif content == "/updates stop":
         open("/home/alon/secure-pi-bot/.updates_disabled", "w").close()
-        await message.channel.send("Automatic updates PAUSED. Tonight's maintenance will skip apt upgrade + reboot (logs, audit, and service-check still run). /updates start to resume.")
+        await message.channel.send("Automatic updates PAUSED. The weekly maintenance (Sun 03:00) will skip apt upgrade + reboot (logs, audit, service-check still run). /updates start to resume.")
 
     elif content == "/updates start":
         try:
             os.remove("/home/alon/secure-pi-bot/.updates_disabled")
         except FileNotFoundError:
             pass
-        await message.channel.send("Automatic updates RESUMED. Next maintenance at 03:00 will run apt upgrade + reboot as normal.")
+        await message.channel.send("Automatic updates RESUMED. Next weekly maintenance (Sun 03:00) will run apt upgrade + reboot as normal.")
 
     elif raw.lower().startswith("/aidebug "):
         rest = raw[9:].strip()
@@ -1203,7 +1203,7 @@ elif not want_restricted and is_restricted:
     id: "maintenance",
     filename: "pi-maintenance.sh",
     path: "/usr/local/bin/pi-maintenance.sh",
-    description: "Full nightly maintenance — flush logs, AdGuard, apt update+full-upgrade+autoremove, audit, service check, reboot (throttled to 600 MHz/powersave + nice/ionice + thermal gates between steps). apt+reboot is skipped when .updates_disabled is set via /updates stop, but logs/audit/service-check still run.",
+    description: "Daily maintenance — flush logs, AdGuard, audit (Sun), service check. apt update+full-upgrade+autoremove + reboot only on Sun (DOW 7), CPU-throttled to 600 MHz/powersave + nice/ionice + thermal gates between steps. Skipped when .updates_disabled is set via /updates stop, but logs/audit/service-check still run daily.",
     tags: ["maintenance", "bash", "cron", "thermal", "throttled"],
     code: `#!/bin/bash
 # Master Maintenance Script — full nightly, CPU-throttled to stay cool
@@ -1271,11 +1271,12 @@ log "AdGuard upgrade..."
 wait_for_cool
 
 UPDATES_LOCK="/home/alon/secure-pi-bot/.updates_disabled"
+UPDATES_DOW="7"   # weekly apt+reboot day (1=Mon..7=Sun)
 
-# 2. OS Updates — full cycle, throttled (skipped if /updates stop was run)
-if [ -f "$UPDATES_LOCK" ]; then
-    log "OS Updates: SKIPPED (.updates_disabled set)"
-    echo "OS Updates: PAUSED" >> "$QUEUE"
+# 2. OS Updates — full cycle, throttled (only on $UPDATES_DOW; skipped if /updates stop)
+if [ -f "$UPDATES_LOCK" ] || [ "$(date +%u)" != "$UPDATES_DOW" ]; then
+    log "OS Updates: SKIPPED (.updates_disabled set, or not weekly DOW $UPDATES_DOW)"
+    echo "OS Updates: PAUSED (weekly DOW $UPDATES_DOW)" >> "$QUEUE"
 else
     log "apt update..."
     $NICE apt-get update -y >> "$LOG_FILE" 2>&1
@@ -1285,7 +1286,7 @@ else
     wait_for_cool
     log "apt autoremove..."
     $NICE apt-get $APT_OPTS autoremove -y >> "$LOG_FILE" 2>&1
-    echo "OS Updates: FULL (throttled, nightly)" >> "$QUEUE"
+    echo "OS Updates: FULL (throttled, weekly DOW $UPDATES_DOW)" >> "$QUEUE"
 
     mkdir -p /home/alon/.secrets
     date '+%Y-%m-%d %H:%M:%S' > /home/alon/.secrets/last_upgrade.txt
@@ -1317,10 +1318,10 @@ fi
 sync
 /usr/local/bin/ntfy-queue.sh >> "$LOG_FILE" 2>&1
 
-# 6. Reboot — only when updates ran (resets CPU clocks; profile_scheduler restores governor within 1 min)
-if [ -f "$UPDATES_LOCK" ]; then
-    log "Reboot: SKIPPED (updates paused — no reboot needed)"
-    echo "Reboot: PAUSED" >> "$QUEUE"
+# 6. Reboot — only when updates ran (weekly). Resets CPU clocks; profile_scheduler restores governor within 1 min.
+if [ -f "$UPDATES_LOCK" ] || [ "$(date +%u)" != "$UPDATES_DOW" ]; then
+    log "Reboot: SKIPPED (no updates ran this pass)"
+    echo "Reboot: SKIPPED" >> "$QUEUE"
 else
     python3 -c "import sys; sys.path.insert(0,'/home/alon/secure-pi-bot/scripts'); import api_manager; api_manager.wait_critical()"
     log "Rebooting in 60s."
@@ -1410,7 +1411,7 @@ fi
 # Weekly report every Monday 09:00
 0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 
-# Nightly maintenance + reboot 03:00 (compress_logs runs inside; log in RAM only)
+# Daily maintenance 03:00 (flush logs, audit Sun, service check). apt-upgrade + reboot only Sun.
 0 3 * * * /usr/local/bin/pi-maintenance.sh >> /dev/shm/pi-bot/maintenance_cron.log 2>&1
 
 # Weekly Lynis snapshot to Google Drive (versioned, keep last 4 + AI change-analysis)
