@@ -1403,6 +1403,7 @@ import json
 import glob
 import subprocess
 import hashlib
+import re
 from datetime import datetime
 
 try:
@@ -1437,16 +1438,28 @@ def drive(method, url, **kw):
     api_manager.record("gdrive", r.status_code < 400)
     return r
 
+def normalize_lynis(text):
+    # Strip "long execution: N.N seconds" timing warnings — they vary every
+    # run even when nothing on the system changed, so a no-change rerun
+    # must NOT be saved as a new Drive version. Score, warnings, suggestions,
+    # and all findings are kept.
+    out = []
+    for line in text.splitlines():
+        if "had a long execution:" in line and "seconds" in line:
+            continue
+        out.append(line)
+    return "\\n".join(out)
+
 try:
     r = subprocess.run(["lynis", "audit", "system", "--no-colors"],
-                       capture_output=True, text=True, timeout=180)
+                       capture_output=True, text=True, timeout=300)
     output = (r.stdout or r.stderr or "").strip()
 except FileNotFoundError:
     print("FAILURE: lynis not installed"); sys.exit(1)
 except subprocess.TimeoutExpired:
     print("FAILURE: lynis timed out"); sys.exit(1)
 
-digest = hashlib.sha256(output.encode()).hexdigest()
+digest = hashlib.sha256(normalize_lynis(output).encode()).hexdigest()
 ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 fname = f"{PREFIX}{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
 
@@ -1490,7 +1503,7 @@ if not DRIVE_READY:
     files = sorted(glob.glob(f"{LOG_DIR}/{PREFIX}*.txt"))
     prev_body = open(files[-1]).read() if files else None
     prev_raw = _extract_output(prev_body) if prev_body else None
-    if prev_raw and hashlib.sha256(prev_raw.encode()).hexdigest() == digest:
+    if prev_raw and hashlib.sha256(normalize_lynis(prev_raw).encode()).hexdigest() == digest:
         print("Lynis unchanged (SD fallback — no new version).")
         sys.exit(0)
     analysis = "(baseline run — first snapshot)" if not prev_raw else run_ai_diff(prev_raw, output)
@@ -1522,7 +1535,7 @@ snaps = list_snapshots()
 if snaps:
     prev = download_text(snaps[0]["id"])
     prev_raw = _extract_output(prev)
-    if hashlib.sha256(prev_raw.encode()).hexdigest() == digest:
+    if hashlib.sha256(normalize_lynis(prev_raw).encode()).hexdigest() == digest:
         print(f"Lynis unchanged — no new version. ({len(snaps)} snapshots on Drive.)")
         sys.exit(0)
     analysis = run_ai_diff(prev_raw, output)
