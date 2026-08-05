@@ -317,9 +317,11 @@ def call_gemini(contents, models, use_tools=True, web=False, max_tokens=800):
             if resp.status_code == 400 and (use_tools or web):
                 continue
             resp.raise_for_status()
+            api_manager.record("gemini", True)
             return resp.json(), model
         except Exception:
             continue
+    api_manager.record("gemini", False)
     return None, None
 
 def gemini_text(prompt_text, models, max_tokens=300):

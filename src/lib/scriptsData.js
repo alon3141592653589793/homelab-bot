@@ -1,4 +1,5 @@
 import aiDebugEntry from "./scripts/aiDebugEntry";
+import apiFailReportEntry from "./scripts/apiFailReportEntry";
 
 const scripts = [
   {
@@ -215,6 +216,9 @@ async def handle_reactive_command(client, message):
     elif content == "/fanreport":
         await run_script(message, "fan_report.py", "Reading fan log...")
 
+    elif content == "/apifails":
+        await run_script(message, "api_fail_report.py", "Reading API failure log (last 7d)...")
+
     elif content == "/lynis":
         await run_script(message, "lynis_report.py", "Running Lynis audit (this can take a couple minutes)...", timeout=240)
 
@@ -295,6 +299,7 @@ async def handle_reactive_command(client, message):
             "/restart              - Reboot Pi (requires confirmation)\\n"
             "/shutdown             - Power off Pi (requires confirmation)\\n"
             "/fanreport            - Show fan activation log\\n"
+            "/apifails             - API call failure rate (last 7 days)\\n"
             "/lynis                - Run Lynis security audit now\\n"
             "/weeklyreport         - Post weekly summary now\\n"
             "/weeklyreport stop    - Disable scheduled weekly reports\\n"
@@ -926,6 +931,7 @@ print("Weekly report sent.")
 `,
   },
   aiDebugEntry,
+  apiFailReportEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
@@ -1455,7 +1461,9 @@ def drive(method, url, **kw):
         CREDS.refresh(gauth_requests.Request())
     headers = {"Authorization": f"Bearer {CREDS.token}"}
     headers.update(kw.pop("headers", {}))
-    return httpreq.request(method, url, headers=headers, timeout=30, **kw)
+    r = httpreq.request(method, url, headers=headers, timeout=30, **kw)
+    api_manager.record("gdrive", r.status_code < 400)
+    return r
 
 try:
     r = subprocess.run(["lynis", "audit", "system", "--quick", "--no-colors"],
@@ -1572,7 +1580,7 @@ print(f"Lynis {('changed' if snaps else 'baseline')} -> uploaded {fname} to Driv
     id: "api-manager",
     filename: "api_manager.py",
     path: "~/secure-pi-bot/scripts/api_manager.py",
-    description: "Cross-script API coordinator shared by every script that calls an external API. rate_limit(provider) serializes calls across processes via flock on /dev/shm, so two scripts hitting the same provider near-simultaneously never exceed that provider's per-second budget. critical_op() holds a shutdown-sensitive lock that restart/shutdown/maintenance wait on before rebooting. queue_outage()/drain_outage() write pending payloads to an SD-card buffer when a cloud call fails, so outage_drain.py replays them later. Also a small with_retry() backoff helper.",
+    description: "Cross-script API coordinator shared by every script that calls an external API. rate_limit(provider) serializes calls across processes via flock on /dev/shm, so two scripts hitting the same provider near-simultaneously never exceed that provider's per-second budget. critical_op() holds a shutdown-sensitive lock that restart/shutdown/maintenance wait on before rebooting. queue_outage()/drain_outage() write pending payloads to an SD-card buffer when a cloud call fails, so outage_drain.py replays them later. record(provider, ok)/api_fail_week() keep a 7-day rolling RAM log of API call outcomes, surfaced by api_fail_report.py (/apifails). Also a small with_retry() backoff helper.",
     tags: ["api", "ratelimit", "outage", "shutdown", "shared"],
     code: `import os
 import time
@@ -1699,6 +1707,68 @@ def with_retry(fn, retries=3, base=1.0):
             if i < retries - 1:
                 time.sleep(base * (2 ** i))
     raise last
+
+
+WEEK_SECONDS = 7 * 86400
+API_LOG = f"{SHM}/api_calls.jsonl"
+
+
+def record(provider, ok):
+    """Append one API call outcome to the RAM log, pruning entries older
+    than a week. Called by every script after an external API call so the
+    /apifails command can report a 7-day failure rate per provider."""
+    lockf = open(MGR_LOCK, "a")
+    fcntl.flock(lockf, fcntl.LOCK_EX)
+    try:
+        lines = []
+        try:
+            with open(API_LOG) as f:
+                lines = [l.strip() for l in f if l.strip()]
+        except OSError:
+            pass
+        cutoff = time.time() - WEEK_SECONDS
+        kept = []
+        for l in lines:
+            try:
+                if json.loads(l).get("ts", 0) >= cutoff:
+                    kept.append(l)
+            except (json.JSONDecodeError, ValueError):
+                continue
+        kept.append(json.dumps({"ts": time.time(), "provider": provider, "ok": bool(ok)}))
+        if len(kept) > 5000:
+            kept = kept[-5000:]
+        with open(API_LOG, "w") as f:
+            f.write("\\n".join(kept) + "\\n")
+    finally:
+        fcntl.flock(lockf, fcntl.LOCK_UN)
+        lockf.close()
+
+
+def api_fail_week():
+    """Return {provider: {ok, fail}} for the last 7 days from the RAM log."""
+    cutoff = time.time() - WEEK_SECONDS
+    stats = {}
+    try:
+        with open(API_LOG) as f:
+            for l in f:
+                l = l.strip()
+                if not l:
+                    continue
+                try:
+                    e = json.loads(l)
+                except json.JSONDecodeError:
+                    continue
+                if e.get("ts", 0) < cutoff:
+                    continue
+                p = e.get("provider", "?")
+                s = stats.setdefault(p, {"ok": 0, "fail": 0})
+                if e.get("ok"):
+                    s["ok"] += 1
+                else:
+                    s["fail"] += 1
+    except OSError:
+        pass
+    return stats
 `,
   },
   {
@@ -1877,7 +1947,9 @@ if sys_rows:
         try:
             with api_manager.critical_op():
                 sys_ws.append_rows(sys_rows, value_input_option="RAW")
+            api_manager.record("gsheets", True)
         except Exception:
+            api_manager.record("gsheets", False)
             api_manager.queue_outage("gsheets", "rows", {"ws": "System Log", "rows": sys_rows})
     else:
         with open(DISK_SYS, "a") as f:
@@ -1906,7 +1978,9 @@ if fan_rows:
         try:
             with api_manager.critical_op():
                 fan_ws.append_rows(fan_rows, value_input_option="RAW")
+            api_manager.record("gsheets", True)
         except Exception:
+            api_manager.record("gsheets", False)
             api_manager.queue_outage("gsheets", "rows", {"ws": "Fan Events", "rows": fan_rows})
     else:
         with open(DISK_FAN, "a") as f:
