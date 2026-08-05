@@ -8,6 +8,7 @@ const entry = {
 import sys
 import time
 import json
+import re
 import subprocess
 import requests
 import api_manager
@@ -180,6 +181,60 @@ def minify_fan_log(raw):
          or _jsonl_tail("/home/alon/secure-pi-bot/logs/fan_events.jsonl", 80))
     return s or "(no fan_log yet)"
 
+def psutil_resources(raw):
+    if not psutil:
+        return "(psutil unavailable)"
+    vm = psutil.virtual_memory()
+    parts = [f"RAM {vm.used//(1024**2)}/{vm.total//(1024**2)}M used ({vm.percent:.0f}%)"]
+    sm = psutil.swap_memory()
+    parts.append(f"Swap {sm.used//(1024**2)}/{sm.total//(1024**2)}M")
+    for part in psutil.disk_partitions(all=False):
+        if part.fstype == "tmpfs" or part.device.startswith("/dev/loop"):
+            continue
+        try:
+            u = psutil.disk_usage(part.mountpoint)
+        except OSError:
+            continue
+        parts.append(f"{part.mountpoint} {u.percent:.0f}% ({u.used/(1024**3):.1f}/{u.total/(1024**3):.1f}G)")
+    parts.append(f"CPU {psutil.cpu_percent(interval=0.3)}%")
+    return "; ".join(parts)
+
+def psutil_procs(raw):
+    if not psutil:
+        return "(psutil unavailable)"
+    procs = []
+    for p in psutil.process_iter():
+        try:
+            procs.append((p, p.name(), p.pid))
+            p.cpu_percent()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    time.sleep(0.2)
+    rows = []
+    for p, name, pid in procs:
+        try:
+            cpu = p.cpu_percent()
+            mem = p.memory_percent()
+            if cpu >= 10 or mem >= 5:
+                rows.append(f"{name}({pid}) {cpu:.0f}%cpu {mem:.0f}%mem")
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return "; ".join(rows) or "no heavy procs"
+
+def psutil_ports(raw):
+    if not psutil:
+        return "(psutil unavailable)"
+    try:
+        conns = psutil.net_connections(kind="inet")
+    except (psutil.AccessDenied, PermissionError):
+        return "(listening ports require root)"
+    rows = []
+    for c in conns:
+        if c.status == psutil.CONN_LISTEN:
+            laddr = f"{c.laddr.ip}:{c.laddr.port}" if c.laddr else "?"
+            rows.append(f"{laddr} pid={c.pid}")
+    return "; ".join(rows) or "no listeners"
+
 INFO = {
     "system_status": (["systemctl", "is-system-running"], None),
     "running_services": (["systemctl", "list-units", "--type=service", "--state=running", "--no-legend"],
@@ -191,13 +246,12 @@ INFO = {
     "clock_core": (["vcgencmd", "measure_clock", "core"], None),
     "cpu_freq": (["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"], _mhz),
     "cpu_gov": (["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"], None),
-    "memory": (["free", "-h"], minify_mem),
-    "disk": (["df", "-h"], minify_disk),
+    "resources": (["true"], psutil_resources),
     "load": (["cat", "/proc/loadavg"], None),
-    "processes": (["ps", "-eo", "pid,comm,%cpu,%mem", "--sort=-%cpu", "--no-header"], minify_ps),
+    "processes": (["true"], psutil_procs),
     "network": (["ip", "addr", "show"], minify_ip),
     "routes": (["ip", "route", "show"], None),
-    "listening": (["ss", "-tln"], minify_ss),
+    "listening": (["true"], psutil_ports),
     "uname": (["uname", "-a"], None),
     "uptime": (["uptime"], None),
     "crontab": (["crontab", "-l"], None),
@@ -244,6 +298,34 @@ def fetch_source(src):
     if callable(m):
         return m(raw)
     return raw[:1200]
+
+SVC_NAME_RE = re.compile(r"^[A-Za-z0-9@._\-]+$")
+
+def handle_inspect_service(service, action, lines=50):
+    # Read-only deep-dive on one specific systemd unit. The service name is
+    # validated against a strict allowlist regex (no spaces, no shell
+    # metachars) and every command is a literal list with shell=False, so the
+    # LLM cannot inject anything. Only read subcommands are accepted.
+    if not service or not SVC_NAME_RE.match(service):
+        return "(invalid service name)"
+    action = (action or "status").lower()
+    if action in ("status", "is-active", "is-enabled"):
+        try:
+            r = subprocess.run(["systemctl", action, "--no-pager", service],
+                               capture_output=True, text=True, timeout=10)
+            return (r.stdout or r.stderr or "(empty)").strip()[:1500]
+        except Exception as e:
+            return f"(err: {e})"
+    if action == "logs":
+        n = max(1, min(int(lines or 50), 200))
+        try:
+            r = subprocess.run(["journalctl", "-u", service, "-n", str(n),
+                                "--no-pager", "--no-hostname"],
+                               capture_output=True, text=True, timeout=15)
+            return (r.stdout or r.stderr or "(empty)").strip()[:1500]
+        except Exception as e:
+            return f"(err: {e})"
+    return f"(unknown action: {action})"
 
 def red_flags():
     flags = []
@@ -301,7 +383,16 @@ TOOL_DECL = [{"name": "get_info",
               "description": "Fetch a read-only diagnostic source (system metric, command output, or a curated non-sensitive settings file) by name. Call only when you need more detail than the context already gives. Variant note: 'lynis' is a quick/fast audit (less thorough, fast); 'lynis_full' is the COMPLETE audit (much longer runtime, most thorough) — prefer 'lynis' unless you explicitly need depth.",
               "parameters": {"type": "object",
                              "properties": {"source": {"type": "string", "enum": TOOL_NAMES}},
-                             "required": ["source"]}}]
+                             "required": ["source"]}},
+             {"name": "inspect_service",
+              "description": "Read-only deep-dive on one specific systemd service: run systemctl status / is-active / is-enabled, or pull recent journalctl logs for it. Use this ONLY when the context flags a SPECIFIC failed service and you need its details to diagnose root cause.",
+              "parameters": {"type": "object",
+                             "properties": {
+                               "service": {"type": "string", "description": "systemd unit name (e.g. nginx.service)"},
+                               "action": {"type": "string", "enum": ["status","is-active","is-enabled","logs"]},
+                               "lines": {"type": "integer", "description": "recent journal lines (only for action=logs)", "minimum": 1, "maximum": 200}
+                             },
+                             "required": ["service","action"]}}]
 TOOLS = [{"functionDeclarations": TOOL_DECL}]
 
 def call_gemini(contents, models, use_tools=True, web=False, max_tokens=800):
@@ -353,6 +444,18 @@ def diag_loop(context, question, models, max_rounds=4, tools=True):
             if p["functionCall"]["name"] == "get_info":
                 src = p["functionCall"].get("args", {}).get("source", "")
                 fr.append({"functionResponse": {"name": "get_info", "response": {"source": src, "result": fetch_source(src)}}})
+            elif p["functionCall"]["name"] == "inspect_service":
+                a = p["functionCall"].get("args", {})
+                svc = str(a.get("service", ""))
+                act = str(a.get("action", "status"))
+                lns = a.get("lines", 50)
+                try:
+                    lns = int(lns)
+                except (TypeError, ValueError):
+                    lns = 50
+                fr.append({"functionResponse": {"name": "inspect_service",
+                          "response": {"service": svc, "action": act,
+                                       "result": handle_inspect_service(svc, act, lns)}}})
         contents.append({"role": "user", "parts": fr})
     return None, used
 
@@ -425,7 +528,7 @@ elif mode == "auto":
 
 elif mode == "auto-error":
     focused = build_context(audit=False)
-    first, used_model = diag_loop(focused, f"Automatic error diagnosis. Trigger: {prompt}. Identify root cause and likely fix, citing exact values.", MODELS)
+    first, used_model = diag_loop(focused, f"Automatic error diagnosis. Trigger: {prompt}. Identify root cause and likely fix, citing exact values. If the trigger names a specific failed service, call inspect_service(service, 'status' or 'logs') for its details before concluding.", MODELS)
     broad = build_context(audit=True)
     second, _ = diag_loop(broad, f"Earlier conclusion: {first or ''}\\n\\nBroader info above. Note if anything adds to or changes your earlier conclusion. Be concise.", MODELS)
     final_text = first or ""
