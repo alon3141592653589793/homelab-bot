@@ -26,13 +26,16 @@ CONV_FILE = f"{SHM}/.ai_conversation.json"
 SUMMARY_LOG = f"{SHM}/ai_summary_log.jsonl"
 RATE_WINDOW = 300            # manual /aidebug cooldown (RAM-backed)
 SILENCE = 20 * 60            # idle time before conversation is summarized+cleared
-REPORT_CHANNEL_ID = 1524756593651224706
 
 os.makedirs(SHM, exist_ok=True)
 
 from dotenv import load_dotenv
 load_dotenv(f"{BOT_DIR}/.env")
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+try:
+    REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", "0"))
+except ValueError:
+    REPORT_CHANNEL_ID = 0
 try:
     with open("/home/alon/.secrets/gemini_key") as f:
         GEMINI_KEY = f.read().strip()

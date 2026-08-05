@@ -824,7 +824,6 @@ except ImportError as e:
     sys.exit(1)
 
 BOT_DIR = "/home/alon/secure-pi-bot"
-REPORT_CHANNEL_ID = 1524756593651224706
 
 os.makedirs("/dev/shm/pi-bot", exist_ok=True)
 
@@ -838,6 +837,10 @@ BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 if not BOT_TOKEN:
     print("FAILURE: DISCORD_BOT_TOKEN not set")
     sys.exit(1)
+try:
+    REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", "0"))
+except ValueError:
+    REPORT_CHANNEL_ID = 0
 
 DISCORD_URL = f"https://discord.com/api/v10/channels/{REPORT_CHANNEL_ID}/messages"
 DISCORD_HEADERS = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
@@ -1269,7 +1272,6 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = "/home/alon/secure-pi-bot/logs"
 PREFIX = "lynis_snapshot_"
 MAX_VERSIONS = 4
-REPORT_CHANNEL_ID = 1524756593651224706
 
 os.makedirs(LOG_DIR, exist_ok=True)
 DRIVE_READY = service_account is not None and os.path.exists(KEY_FILE)
@@ -1330,11 +1332,15 @@ def post_discord(text):
     from dotenv import load_dotenv
     load_dotenv("/home/alon/secure-pi-bot/.env")
     tok = os.getenv("DISCORD_BOT_TOKEN")
-    if not tok:
+    try:
+        ch_id = int(os.getenv("REPORT_CHANNEL_ID", "0"))
+    except ValueError:
+        ch_id = 0
+    if not tok or not ch_id:
         return
     for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
         try:
-            httpreq.post(f"https://discord.com/api/v10/channels/{REPORT_CHANNEL_ID}/messages",
+            httpreq.post(f"https://discord.com/api/v10/channels/{ch_id}/messages",
                          headers={"Authorization": f"Bot {tok}"}, json={"content": chunk}, timeout=10)
         except Exception:
             pass
