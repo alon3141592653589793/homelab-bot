@@ -209,6 +209,7 @@ INFO = {
     "journal_errors": (["journalctl", "-p", "err", "-n", "20", "--no-pager"], None),
     "kernel": (["dmesg", "-T", "--level=err,warn", "-n", "15"], None),
     "lynis": (["lynis", "audit", "system", "--quick", "--no-colors"], "heavy"),
+    "lynis_full": (["lynis", "audit", "system", "--no-colors"], "heavy"),
 }
 
 # Non-sensitive settings files the AI may read (curated; never secrets/env).
@@ -297,7 +298,7 @@ def build_context(audit):
 
 # ---- Gemini call + tool loop ----
 TOOL_DECL = [{"name": "get_info",
-              "description": "Fetch a read-only diagnostic source (system metric, command output, or a curated non-sensitive settings file) by name. Call only when you need more detail than the context already gives.",
+              "description": "Fetch a read-only diagnostic source (system metric, command output, or a curated non-sensitive settings file) by name. Call only when you need more detail than the context already gives. Variant note: 'lynis' is a quick/fast audit (less thorough, fast); 'lynis_full' is the COMPLETE audit (much longer runtime, most thorough) — prefer 'lynis' unless you explicitly need depth.",
               "parameters": {"type": "object",
                              "properties": {"source": {"type": "string", "enum": TOOL_NAMES}},
                              "required": ["source"]}}]
