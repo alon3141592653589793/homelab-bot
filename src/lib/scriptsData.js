@@ -843,9 +843,17 @@ DISCORD_URL = f"https://discord.com/api/v10/channels/{REPORT_CHANNEL_ID}/message
 DISCORD_HEADERS = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
 
 def post(text):
+    import time
     for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
-        r = requests.post(DISCORD_URL, json={"content": chunk}, headers=DISCORD_HEADERS, timeout=10)
-        if r.status_code not in (200, 201):
+        for attempt in range(4):
+            r = requests.post(DISCORD_URL, json={"content": chunk}, headers=DISCORD_HEADERS, timeout=10)
+            if r.status_code in (200, 201):
+                break
+            if r.status_code == 429 and attempt < 3:
+                # Respect Discord's Retry-After (cap 15s) so a rate-limit no
+                # longer aborts the whole weekly report — up to 3 retries.
+                time.sleep(min(float(r.headers.get("Retry-After", 2)) + 1, 15))
+                continue
             print(f"FAILURE: Discord {r.status_code}: {r.text}")
             sys.exit(1)
 
