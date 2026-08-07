@@ -197,12 +197,19 @@ if __name__ == "__main__":
     description: "Command router. Maps Discord /commands to scripts.",
     tags: ["router", "dispatcher"],
     code: `import os
+import asyncio
 import subprocess
-from modules.runner import run_script, confirm_and_run
+from modules.runner import run_script, confirm_and_run, SCRIPTS_DIR
 
 LOGGING_FLAG = "/home/alon/secure-pi-bot/.logging_enabled"
+TESTALL_LOCK = "/dev/shm/pi-bot/.testall_running"
 
 async def handle_reactive_command(client, message):
+    # While /testall runs it holds a lock so the suite can snapshot, mutate,
+    # and restore state without other commands interfering.
+    if os.path.exists(TESTALL_LOCK):
+        await message.channel.send("⏳ /testall is running — other commands are paused until it finishes (check #testing).")
+        return
     content = message.content.strip().lower()
     raw = message.content.strip()
 
@@ -297,7 +304,32 @@ async def handle_reactive_command(client, message):
             await message.channel.send("Usage: /aidebug <question>\\nOptional model prefix: /aidebug [gemini-2.5-flash] <question>")
 
     elif content == "/testall":
-        await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
+        if os.path.exists(TESTALL_LOCK):
+            await message.channel.send("Test suite already running. Wait for it to finish (check #testing).")
+            return
+        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
+        open(TESTALL_LOCK, "w").write("running")
+        await message.channel.send("⏱ Running full test suite -> #testing. Other commands paused until it finishes.")
+        # Spawn non-blocking so the bot's event loop stays alive (thermal monitor,
+        # presence sync keep running) and other commands can be actively paused.
+        proc = await asyncio.create_subprocess_exec(
+            "python3", "-u", os.path.join(SCRIPTS_DIR, "test_all.py"),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+        )
+        cmd_channel = message.channel
+        async def _wait_testall():
+            await proc.wait()
+            # test_all.py clears the lock itself in its finally; this is a
+            # belt-and-braces clear in case it dies before reaching it.
+            try:
+                os.remove(TESTALL_LOCK)
+            except FileNotFoundError:
+                pass
+            try:
+                await cmd_channel.send("✅ /testall finished — see #testing for full results. Commands resumed.")
+            except Exception:
+                pass
+        asyncio.create_task(_wait_testall())
 
     elif content == "/help":
         await message.channel.send(
