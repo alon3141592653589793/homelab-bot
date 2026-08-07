@@ -262,7 +262,7 @@ INFO = {
     "log_system": (["true"], minify_sys_log),
     "log_fan": (["true"], minify_fan_log),
     "log_maintenance": (["sh", "-c", "tail -n 60 /dev/shm/pi-bot/maintenance.log 2>/dev/null"], None),
-    "log_outage": (["sh", "-c", "for f in /home/alon/secure-pi-bot/outage/*.jsonl; do echo \"== $f ==\"; tail -n 20 \"$f\"; done 2>/dev/null"], None),
+    "log_outage": (['sh', '-c', 'for f in /home/alon/secure-pi-bot/outage/*.jsonl; do echo "== $f =="; tail -n 20 "$f"; done 2>/dev/null'], None),
     "journal_errors": (["journalctl", "-p", "err", "-n", "20", "--no-pager"], None),
     "kernel": (["dmesg", "-T", "--level=err,warn", "-n", "15"], None),
     "lynis": (["lynis", "audit", "system", "--quick", "--no-colors"], "heavy"),
@@ -483,7 +483,7 @@ def save_conv(c):
         json.dump(c, f)
 
 def post_discord(text):
-    if not DISCORD_TOKEN:
+    if os.getenv("PI_TEST_MODE") or not DISCORD_TOKEN:
         return
     for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
         try:

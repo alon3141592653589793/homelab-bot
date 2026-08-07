@@ -203,6 +203,9 @@ from modules.runner import run_script, confirm_and_run
 LOGGING_FLAG = "/home/alon/secure-pi-bot/.logging_enabled"
 
 async def handle_reactive_command(client, message):
+    if os.path.exists("/dev/shm/pi-bot/.testall_running"):
+        await message.channel.send("⏳ /testall is running -- commands paused until it finishes.")
+        return
     content = message.content.strip().lower()
     raw = message.content.strip()
 
@@ -601,11 +604,13 @@ for path in (DISK_LOG, RAM_LOG):
                 continue
             try:
                 e = json.loads(line)
-                if e["ts"] not in seen:
-                    seen.add(e["ts"])
-                    events.append(e)
-            except (json.JSONDecodeError, KeyError):
+            except json.JSONDecodeError:
                 continue
+            if not isinstance(e, dict) or "ts" not in e:
+                continue
+            if e["ts"] not in seen:
+                seen.add(e["ts"])
+                events.append(e)
 
 events.sort(key=lambda x: x["ts"])
 
@@ -945,6 +950,10 @@ if spikes:
 lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total")
 
 report = "\\n".join(lines)
+
+if os.getenv("PI_TEST_MODE"):
+    print(f"[TEST MODE] weekly report built ({len(report)} chars) -- real Discord send skipped.")
+    sys.exit(0)
 
 post(report)
 print("Weekly report sent.")
@@ -1330,6 +1339,8 @@ def run_ai_diff(prev, cur):
         return f"(AI diff failed: {e})"
 
 def post_discord(text):
+    if os.getenv("PI_TEST_MODE"):
+        return
     from dotenv import load_dotenv
     load_dotenv("/home/alon/secure-pi-bot/.env")
     tok = os.getenv("DISCORD_BOT_TOKEN")
@@ -1355,6 +1366,9 @@ def _extract_output(body):
     return raw.rstrip("\\n")
 
 _norm = normalize_lynis(output)
+if os.getenv("PI_TEST_MODE") and len(_norm.splitlines()) >= 5:
+    print(f"[TEST MODE] Lynis OK ({len(_norm.splitlines())} substantive lines, digest {digest[:8]}) -- Drive upload + Discord post skipped.")
+    sys.exit(0)
 if len(_norm.splitlines()) < 5:
     msg = (f"Lynis normalizer produced only {len(_norm.splitlines())} substantive lines "
            "(<5 expected) — allowlist likely needs updating for a new Lynis version. "
@@ -1461,6 +1475,10 @@ KEY = "/home/alon/.secrets/gcp_service_account.json"
 SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
 SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
 
+if os.getenv("PI_TEST_MODE"):
+    print("[TEST MODE] outage drain skipped -- no replay to Sheets/Drive.")
+    sys.exit(0)
+
 def _drive_token():
     creds = service_account.Credentials.from_service_account_file(
         KEY, scopes=["https://www.googleapis.com/auth/drive.file"])
@@ -1563,6 +1581,20 @@ if CLOUD_READY:
         # so this run still flushes RAM logs instead of crashing with no write.
         CLOUD_READY = False
         SHEET_ID = None
+
+if bool(os.getenv("PI_TEST_MODE")):
+    def _tc(p):
+        if not os.path.exists(p):
+            return 0
+        n = 0
+        with open(p) as _f:
+            for _ln in _f:
+                if _ln.strip():
+                    n += 1
+        return n
+    _dest = f"sheet {SHEET_ID}" if CLOUD_READY else "SD (keys not configured)"
+    print(f"[TEST MODE] would sync {_tc(SYS_LOG)} system + {_tc(FAN_LOG)} fan rows to {_dest} -- no writes, state unchanged.")
+    sys.exit(0)
 
 def ensure_sheet(title, headers):
     try:
