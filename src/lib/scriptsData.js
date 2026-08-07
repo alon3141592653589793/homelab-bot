@@ -318,6 +318,7 @@ async def handle_reactive_command(client, message):
             "/fastfetch            - Run fastfetch\\n"
             "/updates start|stop   - Pause or resume automatic apt upgrade + reboot\\n"
             "/aidebug <question>   - Conversational AI diagnostic\\n"
+            "/testall              - Run full test suite (posts to #testing)\\n"
             "/help                 - This message"
         )
 `,
