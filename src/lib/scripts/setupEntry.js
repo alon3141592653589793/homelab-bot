@@ -190,6 +190,41 @@ crontab -l
 #   - system_logger reads last log line via seek (no full file load)
 #   - compress_logs streams line by line (no full file in memory)
 #   - status.py reads sysfs directly instead of subprocess where possible
+
+# ============================================================
+# WIREGUARD VPN (Docker: wg-easy) -- one-time setup
+# ============================================================
+# Manually on the Pi (interactive, or with flags/env):
+#   python3 ~/secure-pi-bot/scripts/wireguard_setup.py \
+#       --host <public-ip-or-dyndns> --password <web-ui-pw>
+# Env alternatives: WG_HOST, WG_PASSWORD, WG_DEFAULT_DNS
+#
+# The setup writes ~/secure-pi-bot/wireguard/{.env,docker-compose.yml},
+# creates the wg-easy data dir at ~/.wg-easy, ensures net.ipv4.ip_forward,
+# opens ufw 51820/udp + 51821/tcp if ufw is active, and starts the container.
+# Web UI for peer add/remove/QR: http://<pi-ip>:51821
+#
+# Add alon to the docker group ONCE (so the bot can run docker w/o sudo),
+# then log ALL the way out and back in:
+#   sudo usermod -aG docker alon
+#
+# AdGuardHome service control (/adguard restart|stop|start|update) uses
+# 'AdGuardHome -s <verb>'. If your install needs root for that, allow alon
+# to run it passwordless (extend your polkit rule OR add a sudoers line):
+#   echo "alon ALL=(root) NOPASSWD: /opt/AdGuardHome/AdGuardHome -s *" | \
+#       sudo tee /etc/sudoers.d/pi-adguard
+# ...then change those four commands in modules/adguard.py to wrap the
+# binary with sudo (['sudo', AGH, '-s', '<verb>']).
+
+# ============================================================
+# NEW DISCORD CHANNELS (per-channel command routing)
+# ============================================================
+# Add to ~/secure-pi-bot/.env:
+#   ADGUARD_CHANNEL_ID=<discord channel id of the #adguard channel>
+#   VPN_CHANNEL_ID=<discord channel id of the #vpn channel>
+# Leave them at 0 to keep those channels disabled. main.py now routes each
+# incoming message to the matching handler: #commands -> reactive, #adguard
+# -> adguard, #vpn -> vpn. Every channel pauses during /testall.
 `,
 };
 

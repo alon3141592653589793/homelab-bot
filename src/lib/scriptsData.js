@@ -5,6 +5,9 @@ import setupEntry from "./scripts/setupEntry";
 import crontabEntry from "./scripts/crontabEntry";
 import apiManagerEntry from "./scripts/apiManagerEntry";
 import profileEntries from "./scripts/profileEntries";
+import adguardHandlerEntry from "./scripts/adguardHandlerEntry";
+import vpnHandlerEntry from "./scripts/vpnHandlerEntry";
+import wireguardSetupEntry from "./scripts/wireguardSetupEntry";
 
 const scripts = [
   {
@@ -22,6 +25,8 @@ from dotenv import load_dotenv
 import discord
 from discord.ext import tasks
 from modules.reactive import handle_reactive_command
+from modules.adguard import handle_adguard_command
+from modules.vpn import handle_vpn_command
 
 load_dotenv()
 
@@ -30,14 +35,26 @@ try:
     ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
     COMMAND_CHANNEL_ID = int(os.getenv("COMMAND_CHANNEL_ID", "0"))
     ALERT_CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID", "0"))
+    ADGUARD_CHANNEL_ID = int(os.getenv("ADGUARD_CHANNEL_ID", "0"))
+    VPN_CHANNEL_ID = int(os.getenv("VPN_CHANNEL_ID", "0"))
 except ValueError:
     ALLOWED_USER_ID = 0
     COMMAND_CHANNEL_ID = 0
     ALERT_CHANNEL_ID = 0
+    ADGUARD_CHANNEL_ID = 0
+    VPN_CHANNEL_ID = 0
 
 if not TOKEN or not ALLOWED_USER_ID or not COMMAND_CHANNEL_ID or not ALERT_CHANNEL_ID:
     print("CRITICAL: Environment variables misconfigured.")
     sys.exit(1)
+
+# Per-channel command routers (defaults to 0 = channel disabled). The /testall
+# lock is checked centrally in on_message so ALL channels pause during a run.
+CHANNEL_HANDLERS = {
+    COMMAND_CHANNEL_ID: handle_reactive_command,
+    ADGUARD_CHANNEL_ID: handle_adguard_command,
+    VPN_CHANNEL_ID: handle_vpn_command,
+}
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -180,11 +197,15 @@ async def on_ready():
 async def on_message(message):
     if message.author.id == client.user.id:
         return
-    if message.channel.id != COMMAND_CHANNEL_ID:
-        return
     if message.author.id != ALLOWED_USER_ID:
         return
-    await handle_reactive_command(client, message)
+    handler = CHANNEL_HANDLERS.get(message.channel.id)
+    if not handler:
+        return
+    if os.path.exists("/dev/shm/pi-bot/.testall_running"):
+        await message.channel.send("⏳ /testall is running -- commands paused until it finishes.")
+        return
+    await handler(client, message)
 
 if __name__ == "__main__":
     client.run(TOKEN)
@@ -962,6 +983,9 @@ print("Weekly report sent.")
   aiDebugEntry,
   apiFailReportEntry,
   testAllEntry,
+  adguardHandlerEntry,
+  vpnHandlerEntry,
+  wireguardSetupEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
