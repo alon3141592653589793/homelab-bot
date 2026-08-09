@@ -1347,8 +1347,23 @@ def normalize_lynis(text):
     # layout and the allowlist matches nothing, the small-fingerprint guard
     # below catches it instead of silently minting a bogus 'changed' version.
     def substantive(s):
-        return (s.startswith("W:") or s.startswith("S:")
-                or "Hardening index" in s or "Tests performed" in s)
+        # Lynis 3.x prints per-test results as "[ WARNING ]"/"[ SUGGESTION ]"
+        # and a trailing "* <desc> [TEST-ID]" summary list. Capture both plus
+        # the hardening index / tests-performed totals. Exclude the volatile
+        # "[WARNING]: Test X had a long execution: N.Ns" timing lines so a
+        # no-change rerun hashes identical.
+        t = s.strip()
+        if t.startswith("W:") or t.startswith("S:"):
+            return True
+        if t.endswith("[ WARNING ]") or t.endswith("[ SUGGESTION ]"):
+            return True
+        if t.startswith("* ") and "[" in t and "]" in t:
+            return True
+        if (t.startswith("Warnings (") or t.startswith("Suggestions (")) and t.endswith(":"):
+            return True
+        if "Hardening index" in t or "Tests performed" in t:
+            return True
+        return False
     kept = sorted(s for s in (ln.strip() for ln in text.splitlines()) if substantive(s))
     return "\\n".join(kept)
 
