@@ -8,6 +8,7 @@ import profileEntries from "./scripts/profileEntries";
 import adguardHandlerEntry from "./scripts/adguardHandlerEntry";
 import vpnHandlerEntry from "./scripts/vpnHandlerEntry";
 import wireguardSetupEntry from "./scripts/wireguardSetupEntry";
+import bootDiagEntry from "./scripts/bootDiagEntry";
 
 const scripts = [
   {
@@ -320,6 +321,9 @@ async def handle_reactive_command(client, message):
         else:
             await message.channel.send("Usage: /aidebug <question>\\nOptional model prefix: /aidebug [gemini-2.5-flash] <question>")
 
+    elif content == "/boot":
+        await run_script(message, "boot_diag.py", "Checking boot/reboot history...", timeout=30)
+
     elif content == "/testall":
         await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
 
@@ -343,6 +347,7 @@ async def handle_reactive_command(client, message):
             "/updates start|stop   - Pause or resume automatic apt upgrade + reboot\\n"
             "/aidebug <question>   - Conversational AI diagnostic\\n"
             "/testall              - Run full test suite (posts to #testing)\\n"
+            "/boot                 - Boot/reboot history + skip-cause diagnosis\\n"
             "/help                 - This message"
         )
 `,
@@ -986,6 +991,7 @@ print("Weekly report sent.")
   adguardHandlerEntry,
   vpnHandlerEntry,
   wireguardSetupEntry,
+  bootDiagEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
@@ -1099,16 +1105,19 @@ else:
 # Master Maintenance Script — full nightly, CPU-throttled to stay cool
 
 LOG_FILE="/dev/shm/pi-bot/maintenance.log"
+DISK_LOG="/home/alon/secure-pi-bot/logs/maintenance.log"
 QUEUE="/home/alon/scripts/logs/ntfy_queue.txt"
-mkdir -p /home/alon/scripts/logs
-mkdir -p /dev/shm/pi-bot
+mkdir -p /home/alon/scripts/logs /home/alon/secure-pi-bot/logs /dev/shm/pi-bot
 
 [ -f /home/alon/secure-pi-bot/.maintenance_disabled ] && {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Maintenance disabled." >> "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Maintenance disabled." >> "$DISK_LOG"
     exit 0
 }
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; }
+# log() writes both RAM (realtime) AND disk (survives reboot -> lets /boot
+# tell whether a past maintenance run skipped or issued the reboot).
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$DISK_LOG"; }
 
 # --- Thermal gate (temp in milli-degrees) ---
 TEMP_ZONE="/sys/class/thermal/thermal_zone0/temp"
@@ -1212,8 +1221,11 @@ if [ -f "$UPDATES_LOCK" ] || [ "$(date +%u)" != "$UPDATES_DOW" ]; then
     echo "Reboot: SKIPPED" >> "$QUEUE"
 else
     python3 -c "import sys; sys.path.insert(0,'/home/alon/secure-pi-bot/scripts'); import api_manager; api_manager.wait_critical()"
-    log "Rebooting in 60s."
-    shutdown -r +1 "Scheduled Maintenance Reboot" >> "$LOG_FILE" 2>&1
+    log "Issuing scheduled maintenance reboot via systemctl reboot (polkit-authorized; works as alon or root)."
+    # shutdown -r +1 needs root and could silently no-op if cron runs as the user;
+    # systemctl reboot goes through polkit (same path the bot's /restart uses),
+    # so the weekly reboot actually happens instead of being skipped on perms.
+    systemctl reboot >> "$LOG_FILE" 2>&1
 fi
 
 # Release the maintenance throttle marker so the profile scheduler restores
