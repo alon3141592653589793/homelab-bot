@@ -353,6 +353,7 @@ async def handle_reactive_command(client, message):
             "/testall              - Run full test suite (posts to #testing)\\n"
             "/boot                 - Boot/reboot history + skip-cause diagnosis\\n"
             "/parameters           - List current toggle/setting values\\n"
+            "Side channels         - #adguard -> /adguard help  |  #vpn -> /vpn help\\n"
             "/help                 - This message"
         )
 `,
