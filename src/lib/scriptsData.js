@@ -9,6 +9,7 @@ import adguardHandlerEntry from "./scripts/adguardHandlerEntry";
 import vpnHandlerEntry from "./scripts/vpnHandlerEntry";
 import wireguardSetupEntry from "./scripts/wireguardSetupEntry";
 import bootDiagEntry from "./scripts/bootDiagEntry";
+import paramsEntry from "./scripts/paramsEntry";
 
 const scripts = [
   {
@@ -324,6 +325,9 @@ async def handle_reactive_command(client, message):
     elif content == "/boot":
         await run_script(message, "boot_diag.py", "Checking boot/reboot history...", timeout=30)
 
+    elif content in ("/parameters", "/params", "/paramters"):
+        await run_script(message, "params.py", "Listing current parameters...", timeout=15)
+
     elif content == "/testall":
         await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
 
@@ -348,6 +352,7 @@ async def handle_reactive_command(client, message):
             "/aidebug <question>   - Conversational AI diagnostic\\n"
             "/testall              - Run full test suite (posts to #testing)\\n"
             "/boot                 - Boot/reboot history + skip-cause diagnosis\\n"
+            "/parameters           - List current toggle/setting values\\n"
             "/help                 - This message"
         )
 `,
@@ -992,6 +997,7 @@ print("Weekly report sent.")
   vpnHandlerEntry,
   wireguardSetupEntry,
   bootDiagEntry,
+  paramsEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
