@@ -238,6 +238,31 @@ def psutil_ports(raw):
             rows.append(f"{laddr} pid={c.pid}")
     return "; ".join(rows) or "no listeners"
 
+def params_view(raw):
+    # Current state of user-facing toggles -- mirrors params.py so the AI can
+    # self-query settings via get_info("parameters") instead of Discord.
+    BOT = "/home/alon/secure-pi-bot"; SHM = "/dev/shm/pi-bot"
+    def ex(p): return os.path.exists(p)
+    def rf(p, d=""):
+        try:
+            with open(p) as f: return f.read().strip()
+        except OSError: return d
+    out = []
+    out.append("updates_reboot=" + ("DISABLED" if ex(f"{BOT}/.updates_disabled") else "enabled"))
+    out.append("logger=" + ("ON" if ex(f"{BOT}/.logging_enabled") else "off"))
+    out.append("weekly_report=" + ("DISABLED" if ex(f"{BOT}/.weekly_report_disabled") else "enabled"))
+    out.append("maintenance=" + ("DISABLED" if ex(f"{BOT}/.maintenance_disabled") else "enabled"))
+    ov = rf(f"{BOT}/.profile_override").lower()
+    out.append("cpu_profile_override=" + (ov if ov in ("restricted", "unlimited") else "auto"))
+    try:
+        with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq") as f:
+            out.append("max_freq=" + str(int(f.read().strip()) // 1000) + "MHz")
+    except OSError:
+        pass
+    out.append("testall=" + ("IN_PROGRESS" if ex(f"{SHM}/.testall_running") else "idle"))
+    out.append("thermal_alert=70C")
+    return "; ".join(out)
+
 INFO = {
     "system_status": (["systemctl", "is-system-running"], None),
     "running_services": (["systemctl", "list-units", "--type=service", "--state=running", "--no-legend"],
@@ -250,6 +275,7 @@ INFO = {
     "cpu_freq": (["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"], _mhz),
     "cpu_gov": (["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"], None),
     "resources": (["true"], psutil_resources),
+    "parameters": (["true"], params_view),
     "load": (["cat", "/proc/loadavg"], None),
     "processes": (["true"], psutil_procs),
     "network": (["ip", "addr", "show"], minify_ip),
