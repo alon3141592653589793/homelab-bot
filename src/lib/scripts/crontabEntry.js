@@ -23,9 +23,10 @@ const entry = {
 # Drain SD-card outage buffer -> cloud (retries failed API calls every 5 min)
 */5 * * * * python3 /home/alon/secure-pi-bot/scripts/outage_drain.py
 
-# Weekly report: daily 09:00; script self-gates by Israel day-of-week + ISO-week
-# idempotency (don't rely on the Pi clock for the weekly boundary).
-0 9 * * * python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
+# Weekly report every Monday 09:00. The script also self-gates by Israel
+# day-of-week + ISO-week idempotency, so it won't double-post even if the
+# Pi clock drifts or cron fires twice.
+0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 
 # Daily maintenance 03:00 (flush logs, audit Sun, service check). apt-upgrade + reboot only Sun.
 0 3 * * * /usr/local/bin/pi-maintenance.sh >> /dev/shm/pi-bot/maintenance_cron.log 2>&1

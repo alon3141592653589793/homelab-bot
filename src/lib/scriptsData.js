@@ -842,7 +842,7 @@ print(out or "Logs synced to Google Sheets.")
     id: "weekly-report",
     filename: "weekly_report.py",
     path: "~/secure-pi-bot/scripts/weekly_report.py",
-    description: "Weekly report (Israel-time keyed, ISO-week idempotent): temp, fan. Posts to Discord + syncs a versioned copy to Google Drive (keep last 4); warns Discord if Drive sync fails >1 day. Day-of-week gate (Mon-Wed catch-up) uses Israel time (worldtimeapi -> system-clock fallback), not the Pi clock. Manual /weeklyreport uses --force to bypass guards. Can be disabled via /weeklyreport stop.",
+    description: "Weekly report (Israel-time keyed, ISO-week idempotent): temp, fan. Posts to Discord + syncs a versioned copy to Google Drive (keep last 4); warns Discord if Drive sync fails >1 day. Day-of-week gate (Monday, Israel time) uses worldtimeapi -> system-clock fallback, not the Pi clock. Manual /weeklyreport uses --force to bypass guards. Can be disabled via /weeklyreport stop.",
     tags: ["report", "discord", "weekly"],
     code: `import os
 import sys
@@ -902,8 +902,10 @@ if not TEST_MODE and not FORCE:
     # Idempotency: skip if already posted this Israel ISO-week
     if state.get("week") == this_week:
         sys.exit(0)
-    # Day-of-week guard (Mon-Wed catch-up window in Israel time)
-    if now.isoweekday() not in (1, 2, 3):
+    # Day-of-week guard (Monday in Israel time) -- the Pi clock drifts when
+    # unpowered, so we bind the weekly boundary to the Israel weekday, which
+    # is fetched from the network with a system-clock fallback.
+    if now.isoweekday() != 1:
         sys.exit(0)
 
 from dotenv import load_dotenv
