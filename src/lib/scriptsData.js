@@ -10,6 +10,7 @@ import vpnHandlerEntry from "./scripts/vpnHandlerEntry";
 import wireguardSetupEntry from "./scripts/wireguardSetupEntry";
 import bootDiagEntry from "./scripts/bootDiagEntry";
 import paramsEntry from "./scripts/paramsEntry";
+import systemFixesEntry from "./scripts/systemFixesEntry";
 
 const scripts = [
   {
@@ -1898,6 +1899,7 @@ print(f"Synced {len(sys_rows)} system + {len(fan_rows)} fan rows to {dest}")
 `,
   },
   setupEntry,
+  systemFixesEntry,
 ];
 
 export default scripts;
