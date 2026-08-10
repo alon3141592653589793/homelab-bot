@@ -158,7 +158,9 @@ crontab - << 'EOF'
 * * * * * python3 /home/alon/secure-pi-bot/scripts/fan_logger.py
 */30 * * * * python3 /home/alon/secure-pi-bot/scripts/log_sync.py
 */5 * * * * python3 /home/alon/secure-pi-bot/scripts/outage_drain.py
-0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
+# Daily 09:00; script self-gates by Israel day-of-week + ISO-week idempotency
+# (don't rely on the Pi clock for the weekly boundary).
+0 9 * * * python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
 0 3 * * * /usr/local/bin/pi-maintenance.sh >> /dev/shm/pi-bot/maintenance_cron.log 2>&1
 0 4 * * 0 python3 /home/alon/secure-pi-bot/scripts/lynis_snapshot.py
 0 5 * * 0 python3 /home/alon/secure-pi-bot/scripts/ai_debug.py --audit

@@ -160,20 +160,15 @@ async def passive_thermal_monitor():
             services_str = ", ".join(sorted(new_failed))
             auto_prompt = f"Automated alert: service(s) {services_str} just failed. Review system state and diagnose what went wrong. Suggest fixes."
             script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "ai_debug.py")
+            # Fire-and-forget: ai_debug.py --auto-error posts its Auto-Diagnosis
+            # to the AI-debugger (REPORT) channel itself; echoing STDOUT here
+            # would duplicate the same diagnosis into the news/alert channel.
             try:
-                proc = await asyncio.create_subprocess_exec(
+                await asyncio.create_subprocess_exec(
                     "python3", "-u", script_path, "--auto-error", auto_prompt,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
-                output = stdout.decode().strip()
-                if output:
-                    if len(output) > 1900:
-                        output = output[:1897] + "..."
-                    await ch.send(output)
-            except asyncio.TimeoutError:
-                pass
             except Exception:
                 pass
         if recovered:
@@ -265,7 +260,7 @@ async def handle_reactive_command(client, message):
         await run_script(message, "update_bot_status.py", "")
 
     elif content == "/weeklyreport":
-        await run_script(message, "weekly_report.py", "Generating weekly report...")
+        await run_script(message, "weekly_report.py", "Generating weekly report...", args=["--force"])
 
     elif content == "/weeklyreport stop":
         open("/home/alon/secure-pi-bot/.weekly_report_disabled", "w").close()
@@ -847,11 +842,13 @@ print(out or "Logs synced to Google Sheets.")
     id: "weekly-report",
     filename: "weekly_report.py",
     path: "~/secure-pi-bot/scripts/weekly_report.py",
-    description: "Weekly report: temp, fan. No RAM or failed services (handled by bot). Can be disabled via /weeklyreport stop.",
+    description: "Weekly report (Israel-time keyed, ISO-week idempotent): temp, fan. Posts to Discord + syncs a versioned copy to Google Drive (keep last 4); warns Discord if Drive sync fails >1 day. Day-of-week gate (Mon-Wed catch-up) uses Israel time (worldtimeapi -> system-clock fallback), not the Pi clock. Manual /weeklyreport uses --force to bypass guards. Can be disabled via /weeklyreport stop.",
     tags: ["report", "discord", "weekly"],
     code: `import os
 import sys
 import json
+import time
+import api_manager
 from datetime import datetime, timedelta
 
 try:
@@ -862,12 +859,52 @@ except ImportError as e:
     sys.exit(1)
 
 BOT_DIR = "/home/alon/secure-pi-bot"
+SHM = "/dev/shm/pi-bot"
+STATE_FILE = f"{SHM}/.weekly_report_state.json"
+DRIVE_STATE = f"{SHM}/.weekly_drive_state.json"
+os.makedirs(SHM, exist_ok=True)
+TEST_MODE = bool(os.getenv("PI_TEST_MODE"))
+FORCE = "--force" in sys.argv  # manual /weeklyreport bypasses day/idempotency guards
 
-os.makedirs("/dev/shm/pi-bot", exist_ok=True)
+# --- Israel local time (true time when online, Pi clock fallback) ---
+# The Pi's onboard clock drifts, so day-of-week gating uses Israel time from
+# a network time API when reachable, falling back to the system clock -> Asia/Jerusalem.
+def israel_now():
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://worldtimeapi.org/api/timezone/Asia/Jerusalem", timeout=5) as r:
+            return datetime.fromisoformat(json.load(r)["datetime"])
+    except Exception:
+        pass
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Asia/Jerusalem"))
+    except Exception:
+        from datetime import timezone
+        return datetime.now(timezone(timedelta(hours=3)))
+
+def iso_week(dt):
+    return dt.strftime("%G-W%V")  # ISO week id, stable across year boundaries
 
 if os.path.exists(f"{BOT_DIR}/.weekly_report_disabled"):
     print("Weekly report disabled. Use /weeklyreport start to re-enable.")
     sys.exit(0)
+
+now = israel_now()
+this_week = iso_week(now)
+state = {}
+if not TEST_MODE and not FORCE:
+    try:
+        with open(STATE_FILE) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        pass
+    # Idempotency: skip if already posted this Israel ISO-week
+    if state.get("week") == this_week:
+        sys.exit(0)
+    # Day-of-week guard (Mon-Wed catch-up window in Israel time)
+    if now.isoweekday() not in (1, 2, 3):
+        sys.exit(0)
 
 from dotenv import load_dotenv
 load_dotenv(f"{BOT_DIR}/.env")
@@ -885,6 +922,7 @@ DISCORD_HEADERS = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "applica
 
 def post(text):
     import time
+    ok = True
     for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
         for attempt in range(4):
             r = requests.post(DISCORD_URL, json={"content": chunk}, headers=DISCORD_HEADERS, timeout=10)
@@ -896,9 +934,11 @@ def post(text):
                 time.sleep(min(float(r.headers.get("Retry-After", 2)) + 1, 15))
                 continue
             print(f"FAILURE: Discord {r.status_code}: {r.text}")
-            sys.exit(1)
+            ok = False
+            return ok
+    return ok
 
-cutoff = datetime.now() - timedelta(days=7)
+cutoff = now - timedelta(days=7)
 
 def load_jsonl_since(paths, ts_key_candidates):
     out = []
@@ -964,7 +1004,7 @@ try:
 except Exception:
     uptime = "Unknown"
 
-week = datetime.now().strftime("%b %d, %Y")
+week = now.strftime("%b %d, %Y")
 lines = [f"**Weekly Pi Report -- {week}**", f"Uptime: {uptime}"]
 
 lines.append(
@@ -982,12 +1022,111 @@ if spikes:
 lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total")
 
 report = "\\n".join(lines)
+drive_body = f"=== WEEKLY REPORT {now.isoformat(timespec='seconds')} ===\\n{report}\\n"
 
-if os.getenv("PI_TEST_MODE"):
-    print(f"[TEST MODE] weekly report built ({len(report)} chars) -- real Discord send skipped.")
+if TEST_MODE:
+    print(f"[TEST MODE] weekly report built ({len(report)} chars) -- Discord+Drive send skipped, state not persisted.")
+    print(report)
     sys.exit(0)
 
-post(report)
+# --- Send to Discord (best-effort; failure no longer aborts Drive sync) ---
+discord_ok = post(report)
+
+# --- Sync to Google Drive (versioned, keep last 4) ---
+KEY = "/home/alon/.secrets/gcp_service_account.json"
+SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
+DRIVE_READY = False
+try:
+    from google.oauth2 import service_account
+    from google.auth.transport import requests as gauth_requests
+    DRIVE_READY = os.path.exists(KEY)
+except ImportError:
+    DRIVE_READY = False
+
+def sync_to_drive(body):
+    if not DRIVE_READY:
+        return False, "Drive keys/lib unavailable"
+    try:
+        creds = service_account.Credentials.from_service_account_file(
+            KEY, scopes=["https://www.googleapis.com/auth/drive.file"])
+        if not creds.valid or creds.expired:
+            creds.refresh(gauth_requests.Request())
+    except Exception as e:
+        return False, str(e)
+    header = {"Authorization": f"Bearer {creds.token}"}
+    fname = f"weekly_report_{now.strftime('%Y%m%d_%H%M')}.txt"
+    meta = {"name": fname, "mimeType": "text/plain"}
+    files = {"metadata": (fname + ".meta", json.dumps(meta), "application/json; charset=UTF-8"),
+             "file": (fname, body, "text/plain")}
+    try:
+        api_manager.rate_limit("gdrive")
+        r = requests.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+                          headers=header, files=files, timeout=30)
+        api_manager.record("gdrive", r.status_code < 400)
+        if r.status_code not in (200, 201):
+            return False, f"{r.status_code} {r.text[:120]}"
+        fid = r.json()["id"]
+        if os.path.exists(SHARE_EMAIL_FILE):
+            email = open(SHARE_EMAIL_FILE).read().strip()
+            if email:
+                api_manager.rate_limit("gdrive")
+                requests.post(f"https://www.googleapis.com/drive/v3/files/{fid}/permissions",
+                              headers=header,
+                              json={"type": "user", "emailAddress": email, "role": "reader"},
+                              timeout=30)
+        # keep last 4 versions
+        api_manager.rate_limit("gdrive")
+        lst = requests.get("https://www.googleapis.com/drive/v3/files", headers=header, timeout=30,
+                           params={"q": "name contains 'weekly_report_' and trashed=false",
+                                   "orderBy": "createdTime desc", "fields": "files(id,name)",
+                                   "pageSize": 20})
+        if lst.status_code == 200:
+            for old in lst.json().get("files", [])[4:]:
+                requests.delete(f"https://www.googleapis.com/drive/v3/files/{old['id']}",
+                                headers=header, timeout=20)
+        return True, fname
+    except Exception as e:
+        return False, str(e)
+
+drive_ok, drive_msg = sync_to_drive(drive_body)
+if not drive_ok:
+    api_manager.queue_outage("gdrive", "weekly_report",
+        {"fname": f"weekly_report_{now.strftime('%Y%m%d_%H%M')}.txt", "body": drive_body})
+
+# --- Drive-fail tracking: warn Discord if failing for > 1 day ---
+ds = {}
+try:
+    if os.path.exists(DRIVE_STATE):
+        with open(DRIVE_STATE) as f:
+            ds = json.load(f)
+except (OSError, ValueError):
+    pass
+if drive_ok:
+    ds = {"fail_since": None}
+else:
+    if not ds.get("fail_since"):
+        ds["fail_since"] = now.isoformat()
+        ds["err"] = str(drive_msg)[:200]
+    age = (now - datetime.fromisoformat(ds["fail_since"])).total_seconds()
+    if age > 86400:
+        post(f"**Weekly report Drive sync warning** [{now.strftime('%H:%M')}] -- failing for >1 day ({int(age//3600)}h). Last error: {ds.get('err','')}")
+try:
+    with open(DRIVE_STATE, "w") as f:
+        json.dump(ds, f)
+except OSError:
+    pass
+
+# --- Mark this Israel ISO-week posted (only if at least one channel succeeded) ---
+if discord_ok or drive_ok:
+    state["week"] = this_week
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f)
+    except OSError:
+        pass
+else:
+    print("Weekly report: both Discord and Drive failed; not marking week posted (will retry next eligible run).")
+
 print("Weekly report sent.")
 `,
   },
