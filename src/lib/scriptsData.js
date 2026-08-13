@@ -1052,8 +1052,10 @@ def sync_to_drive(body):
     if not DRIVE_READY:
         return False, "Drive keys/lib unavailable"
     try:
+        # drive.file cannot reach UI-shared folders (404). Use full drive scope
+        # so the weekly report uploads into the shared "pi" folder.
         creds = service_account.Credentials.from_service_account_file(
-            KEY, scopes=["https://www.googleapis.com/auth/drive.file"])
+            KEY, scopes=["https://www.googleapis.com/auth/drive"])
         if not creds.valid or creds.expired:
             creds.refresh(gauth_requests.Request())
     except Exception as e:

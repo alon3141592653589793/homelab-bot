@@ -39,7 +39,11 @@ def _load_parent_id():
         return None
 PARENT_FOLDER = _load_parent_id()
 DRIVE_READY = service_account is not None and os.path.exists(KEY_FILE)
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+# NOTE: drive.file scope CANNOT see folders shared with the SA via the Drive
+# UI -- it only sees files the SA itself created/uploaded. A user-shared "pi"
+# folder returns 404 under drive.file. Using the full drive scope so uploads
+# land in the shared folder the user already set up.
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 CREDS = service_account.Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES) if DRIVE_READY else None
 
 def drive(method, url, **kw):
