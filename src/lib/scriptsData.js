@@ -524,7 +524,7 @@ print(
     id: "fan-logger",
     filename: "fan_logger.py",
     path: "~/secure-pi-bot/scripts/fan_logger.py",
-    description: "Logs fan ON/OFF transitions to /dev/shm (RAM). 60s boot delay. No SD writes. Flushed by compress_logs.py before reboot. Caps at 2000 lines.",
+    description: "Logs fan ON/OFF transitions to /dev/shm (RAM). 60s boot delay. No SD writes. Flushed by compress_logs.py before reboot. Caps at 2000 lines. This Pi's fan is hardwired always-on (pwm1 read-only, pwm1_enable flip has no effect) — the logger records one continuous 'on' session from boot; no ON/OFF transitions to track.",
     tags: ["fan", "logging", "thermal"],
     code: `import os
 import json
@@ -549,26 +549,12 @@ if not os.path.isdir(PIBOT_DIR):
     raise SystemExit(0)
 
 def get_fan_active() -> bool:
-    import subprocess
-    # vcgencmd get_fan — Pi 5 / official fan HAT
-    try:
-        r = subprocess.run(["vcgencmd", "get_fan"], capture_output=True, text=True, timeout=3)
-        if r.returncode == 0:
-            return r.stdout.strip().endswith("=1")
-    except Exception:
-        pass
-    # GPIO sysfs (GPIO 14 default fan pin)
-    try:
-        with open("/sys/class/gpio/gpio14/value") as f:
-            return f.read().strip() == "1"
-    except OSError:
-        pass
-    # Fallback: temperature inference
-    try:
-        with open("/sys/class/thermal/thermal_zone0/temp") as f:
-            return int(f.read()) >= 65000
-    except OSError:
-        return False
+    # This Pi's fan is a 2-wire fan hardwired to 5V/GND — always on while the
+    # Pi has power. Confirmed uncontrollable: pwm1 is read-only (root gets
+    # "Operation not permitted") and flipping pwm1_enable to manual did not
+    # stop it. The gpio-fan overlay is loaded but controls nothing, so we
+    # record one continuous "on" session from boot — no ON/OFF transitions.
+    return True
 
 now_active = get_fan_active()
 now_str = datetime.now().isoformat(timespec="seconds")
@@ -672,9 +658,11 @@ for start, end in sessions[-20:]:
     else:
         lines.append(f"  {s.strftime('%m/%d %H:%M')} -> running")
 
+now = datetime.now()
 total = sum(
-    (datetime.fromisoformat(e) - datetime.fromisoformat(s)).total_seconds()
-    for s, e in sessions if e
+    (datetime.fromisoformat(e) - datetime.fromisoformat(s)).total_seconds() if e
+    else (now - datetime.fromisoformat(s)).total_seconds()
+    for s, e in sessions
 )
 lines.append(f"Total fan-on: {int(total // 60)}m")
 print("\\n".join(lines))
@@ -997,8 +985,9 @@ while i < len(fan_entries):
     i += 1
 
 total_fan_s = sum(
-    (datetime.fromisoformat(e) - datetime.fromisoformat(s)).total_seconds()
-    for s, e in fan_sessions if e
+    (datetime.fromisoformat(e) - datetime.fromisoformat(s)).total_seconds() if e
+    else (now - datetime.fromisoformat(s)).total_seconds()
+    for s, e in fan_sessions
 )
 
 try:
