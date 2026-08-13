@@ -13,6 +13,13 @@ import contextlib
 SHM = "/dev/shm/pi-bot"
 MGR_LOCK = f"{SHM}/.api_manager.lock"
 CRITICAL_LOCK = f"{SHM}/.critical_ops.lock"
+# Dedicated lock for the outage buffer, SEPARATE from MGR_LOCK. drain_outage
+# holds this while reading/clearing the buffer, then RELEASES it before
+# calling handlers (which call rate_limit -> MGR_LOCK). Sharing MGR_LOCK here
+# caused a re-entrant deadlock: drain held MGR_LOCK, the handler called
+# rate_limit which blocked on MGR_LOCK forever, so the lock was never
+# released and EVERY other script hung on rate_limit.
+OUTAGE_LOCK = f"{SHM}/.outage.lock"
 OUTAGE_DIR = "/home/alon/secure-pi-bot/outage"
 
 os.makedirs(SHM, exist_ok=True)
@@ -81,17 +88,31 @@ def wait_critical(max_wait=60):
 
 def queue_outage(provider, kind, payload):
     """Append a pending item to the SD-card outage buffer for later retry."""
-    with open(f"{OUTAGE_DIR}/{provider}.jsonl", "a") as f:
-        f.write(json.dumps({"kind": kind, "payload": payload, "ts": time.time()}) + "\\n")
+    lockf = open(OUTAGE_LOCK, "a")
+    fcntl.flock(lockf, fcntl.LOCK_EX)
+    try:
+        with open(f"{OUTAGE_DIR}/{provider}.jsonl", "a") as f:
+            f.write(json.dumps({"kind": kind, "payload": payload, "ts": time.time()}) + "\\n")
+    finally:
+        fcntl.flock(lockf, fcntl.LOCK_UN)
+        lockf.close()
 
 
 def drain_outage(provider, handle):
     """Replay each buffered item through handle(item)->bool. Successful items
-    are removed; failures stay queued. Returns count drained."""
+    are removed; failures stay queued. Returns count drained.
+
+    Locking: reads + clears the buffer under OUTAGE_LOCK, then RELEASES the
+    lock before calling handlers (which call rate_limit -> MGR_LOCK). Failed
+    items are re-appended under OUTAGE_LOCK. This avoids the re-entrant
+    deadlock that happened when drain held MGR_LOCK while a handler tried to
+    acquire MGR_LOCK via rate_limit -- which blocked forever and pinned the
+    lock so every other script hung.
+    """
     path = f"{OUTAGE_DIR}/{provider}.jsonl"
     if not os.path.exists(path):
         return 0
-    lockf = open(MGR_LOCK, "a")
+    lockf = open(OUTAGE_LOCK, "a")
     fcntl.flock(lockf, fcntl.LOCK_EX)
     try:
         items = []
@@ -103,22 +124,34 @@ def drain_outage(provider, handle):
                         items.append(json.loads(ln))
                     except json.JSONDecodeError:
                         continue
-        remaining, drained = [], 0
-        for it in items:
-            try:
-                if handle(it):
-                    drained += 1
-                    continue
-            except Exception:
-                pass
-            remaining.append(it)
-        with open(path, "w") as f:
-            for it in remaining:
-                f.write(json.dumps(it) + "\\n")
-        return drained
+        # Clear the buffer now (under the lock). Items that fail to drain
+        # below are re-appended; items appended by queue_outage during
+        # processing land in the cleared file and are preserved.
+        open(path, "w").close()
     finally:
         fcntl.flock(lockf, fcntl.LOCK_UN)
         lockf.close()
+    # Handlers run OUTSIDE any lock so they can call rate_limit freely.
+    remaining, drained = [], 0
+    for it in items:
+        try:
+            if handle(it):
+                drained += 1
+                continue
+        except Exception:
+            pass
+        remaining.append(it)
+    if remaining:
+        lockf = open(OUTAGE_LOCK, "a")
+        fcntl.flock(lockf, fcntl.LOCK_EX)
+        try:
+            with open(path, "a") as f:
+                for it in remaining:
+                    f.write(json.dumps(it) + "\\n")
+        finally:
+            fcntl.flock(lockf, fcntl.LOCK_UN)
+            lockf.close()
+    return drained
 
 
 def with_retry(fn, retries=3, base=1.0):
