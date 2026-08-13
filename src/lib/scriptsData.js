@@ -1447,53 +1447,26 @@ fi
     id: "outage-drain",
     filename: "outage_drain.py",
     path: "~/secure-pi-bot/scripts/outage_drain.py",
-    description: "Every 5 min cron. Replays the SD-card outage buffers: re-appends queued Sheets rows and re-uploads queued Drive files, sharing each new Drive file with your email. Successful items are removed from the buffer; failures stay queued for the next run. Only runs when providers are reachable.",
-    tags: ["outage", "gsheets", "gdrive", "cron"],
-    code: `import os, sys, json
+    description: "Every 5 min cron. Replays the SD-card outage buffer: re-appends queued Sheets rows (any worksheet: System Log, Fan Events, Weekly Reports, Lynis Snapshots). Successful items are removed from the buffer; failures stay queued for the next run. Everything goes through Google Sheets now -- service accounts have no Drive storage quota (403).",
+    tags: ["outage", "gsheets", "cron"],
+    code: `import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import api_manager
 
 try:
     import gspread
-    from google.oauth2 import service_account
-    from google.auth.transport import requests as gauth_requests
-    import requests as httpreq
 except ImportError as e:
-    print(f"FAILURE: {e} (pip3 install --user gspread google-auth)")
+    print(f"FAILURE: {e} (pip3 install --user gspread)")
     sys.exit(1)
 
 KEY = "/home/alon/.secrets/gcp_service_account.json"
 SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
-SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
 
 if os.getenv("PI_TEST_MODE"):
-    print("[TEST MODE] outage drain skipped -- no replay to Sheets/Drive.")
+    print("[TEST MODE] outage drain skipped -- no replay to Sheets.")
     sys.exit(0)
 
-def _drive_token():
-    creds = service_account.Credentials.from_service_account_file(
-        KEY, scopes=["https://www.googleapis.com/auth/drive.file"])
-    if not creds.valid or creds.expired:
-        creds.refresh(gauth_requests.Request())
-    return creds.token
-
-def _share(file_id):
-    if not os.path.exists(SHARE_EMAIL_FILE):
-        return
-    email = open(SHARE_EMAIL_FILE).read().strip()
-    if not email:
-        return
-    api_manager.rate_limit("gdrive")
-    try:
-        httpreq.request("POST",
-            f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
-            headers={"Authorization": f"Bearer {_drive_token()}"},
-            json={"type": "user", "emailAddress": email, "role": "reader"},
-            timeout=30)
-    except Exception:
-        pass
-
-# --- Sheets: re-append queued rows ---
+# --- Sheets: re-append queued rows to whatever worksheet the payload names ---
 def handle_sheets(item):
     p = item["payload"]
     try:
@@ -1503,34 +1476,16 @@ def handle_sheets(item):
         try:
             ws = sh.worksheet(p["ws"])
         except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(p["ws"], rows=1, cols=len(p["rows"][0]) + 2)
+            # Create the missing worksheet with enough cols for the queued rows.
+            ncols = max(len(r) for r in p["rows"]) if p["rows"] else 6
+            ws = sh.add_worksheet(p["ws"], rows=1, cols=ncols + 2)
         ws.append_rows(p["rows"], value_input_option="RAW")
         return True
     except Exception:
         return False
 
-# --- Drive: re-upload queued files ---
-def handle_drive(item):
-    p = item["payload"]
-    try:
-        meta = {"name": p["fname"], "mimeType": "text/plain"}
-        api_manager.rate_limit("gdrive")
-        r = httpreq.request("POST",
-            "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
-            headers={"Authorization": f"Bearer {_drive_token()}"},
-            files={"metadata": ("meta", json.dumps(meta), "application/json; charset=UTF-8"),
-                   "file": ("file", p["body"], "text/plain")},
-            timeout=30)
-        if r.status_code in (200, 201):
-            _share(r.json()["id"])
-            return True
-        return False
-    except Exception:
-        return False
-
-d1 = api_manager.drain_outage("gsheets", handle_sheets)
-d2 = api_manager.drain_outage("gdrive", handle_drive)
-print(f"Drained from outage buffer: {d1} sheets + {d2} drive items.")
+drained = api_manager.drain_outage("gsheets", handle_sheets)
+print(f"Drained from outage buffer: {drained} sheets rows.")
 `,
   },
   {

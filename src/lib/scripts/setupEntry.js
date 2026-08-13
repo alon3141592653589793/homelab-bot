@@ -70,54 +70,33 @@ touch /home/alon/secure-pi-bot/.logging_enabled
 pip3 install --user requests psutil python-dotenv gspread
 
 # ============================================================
-# GOOGLE SHEETS LOG SYNC (replaces SD-card log flush)
+# GOOGLE SHEETS — the ONLY cloud destination for logs + reports
 # ============================================================
-# RAM logs (system_log + fan_events) are synced to a Google Sheet by
-# log_sync.py every 30 min and at reboot via compress_logs.py.
-# NO project logs touch the SD card anymore.
+# Everything that leaves the Pi goes to ONE Google Sheet:
+#   - log_sync.py         -> "System Log" + "Fan Events" worksheets (every 30 min + at reboot)
+#   - weekly_report.py    -> "Weekly Reports" worksheet (weekly Monday)
+#   - lynis_snapshot.py   -> "Lynis Snapshots" worksheet (weekly Sunday, on score change)
+#   - outage_drain.py     -> replays any failed row back into the right worksheet (every 5 min)
 #
-# 1. Google Cloud Console: enable BOTH "Google Sheets API" AND
-#    "Google Drive API", create a service account, add a JSON key,
-#    download it, and place at:
-mkdir -p /home/alon/.secrets
-#    (upload the JSON as) /home/alon/.secrets/gcp_service_account.json
-chmod 600 /home/alon/.secrets/gcp_service_account.json
-chmod 700 /home/alon/.secrets
+# Why Sheets (not Drive files)? A service account has NO storage quota,
+# so it CANNOT own/upload Drive files -- it 403s with storageQuotaExceeded.
+# But appending rows to a sheet YOU own (shared with the SA as Editor) is
+# billed to YOUR quota, which is exactly what we want. One spreadsheet,
+# four worksheets, zero Drive.
 #
-# 2. Create a Google Sheet in Drive, share it with the service account's
-#    email (Editor). Put the sheet ID (from its URL) into a file:
-echo 'YOUR_SHEET_ID_HERE' > /home/alon/.secrets/gsheets_log_id.txt
-chmod 600 /home/alon/.secrets/gsheets_log_id.txt
-#
-# 3. lynis_snapshot.py uploads weekly Lynis versions to Drive (keeping
-#    the last 4) and shares each file with your email so you can read it:
-echo 'your_email@gmail.com' > /home/alon/.secrets/gdrive_share_email.txt
-chmod 600 /home/alon/.secrets/gdrive_share_email.txt
-#
-# (google-auth, used by log_sync + lynis_snapshot, is installed as a
-#  dependency of gspread. If you skipped gspread, also run:
-#  pip3 install --user google-auth)
-#
-# log_sync.py auto-creates two worksheets inside that sheet:
-#   "System Log"  -> ts, temp_c, ram_pct, warnings, spikes, failed
-#   "Fan Events"  -> ts, event, note
-# Delta-sync by timestamp, so RAM rotation is safe:
-# already-synced entries are never re-pushed.
+# Until the keys below are set up, log_sync + lynis_snapshot automatically
+# fall back to SD-card storage so logging keeps working locally.
 
 # ============================================================
-# GOOGLE API SETUP (Sheets / Drive) — how to actually get them
+# GOOGLE API + SHEET SETUP — how to actually configure it
 # ============================================================
-# ONE service account key serves Google Sheets and Google Drive. No Google
-# Docs API needed — all docs are saved as plain-text files on Drive.
-# Until you set up the service account, log_sync + lynis_snapshot automatically
-# fall back to SD-card storage. Set the keys up to move fully to cloud.
+# ONE service account key serves all four scripts. Only the Google Sheets
+# API is needed.
 #
-# Step 1 — Enable the APIs (get them here):
+# Step 1 — Enable the Google Sheets API:
 #   Open https://console.cloud.google.com/ -> APIs & Services -> Library
-#   Search and ENABLE each one you need:
-#     - "Google Sheets API"     (log_sync.py)
-#     - "Google Drive API"      (lynis_snapshot.py)
-#   (No Google Docs API — files saved as plain text on Drive.)
+#   Search "Google Sheets API" and ENABLE it.
+#   (No Google Drive API needed -- nothing uploads Drive files anymore.)
 #
 # Step 2 — Create a service account + download a key:
 #   IAM & Admin > Service accounts > CREATE SERVICE ACCOUNT
@@ -126,28 +105,27 @@ chmod 600 /home/alon/.secrets/gdrive_share_email.txt
 #   Copy the downloaded JSON to:
       /home/alon/.secrets/gcp_service_account.json
 chmod 600 /home/alon/.secrets/gcp_service_account.json
-#   The file's "client_email" field is what you must share things with below.
+chmod 700 /home/alon/.secrets
+#   The file's "client_email" field is what you must share the sheet with below.
 #
-# Step 3 — Sheets (log_sync.py): connect a spreadsheet
-#   - Create a spreadsheet in Google Drive.
+# Step 3 — Connect a spreadsheet (all four scripts write here):
+#   - Create ONE spreadsheet in Google Drive.
 #   - Click Share and add the service account's client_email as Editor.
 #   - Grab the sheet ID from its URL: docs.google.com/spreadsheets/d/<SHEET_ID>/edit
 #   - Save it:
 echo 'YOUR_SHEET_ID_HERE' > /home/alon/.secrets/gsheets_log_id.txt
 chmod 600 /home/alon/.secrets/gsheets_log_id.txt
+#   worksheets ("System Log", "Fan Events", "Weekly Reports", "Lynis Snapshots")
+#   are auto-created by the scripts on first run -- do not preset them.
 #
-# Step 4 — Drive (lynis_snapshot.py): where your files land
-#   The script uploads into the SERVICE ACCOUNT'S own Drive (invisible to you
-#   by default), then shares each file with your reading email. Put that
-#   email here so the files appear in your "Shared with me":
-echo 'your_email@gmail.com' > /home/alon/.secrets/gdrive_share_email.txt
-chmod 600 /home/alon/.secrets/gdrive_share_email.txt
-#
-# Step 5 — Outage buffer (automatic SD-card fallback)
-#   When Drive/Sheets are down, failed entries are queued to:
-#     /home/alon/secure-pi-bot/outage/<provider>.jsonl
+# Step 4 — Outage buffer (automatic SD-card fallback):
+#   When Sheets is down, failed rows are queued to:
+#     /home/alon/secure-pi-bot/outage/gsheets.jsonl
 #   outage_drain.py (cron, every 5 min) replays them once the API is reachable.
-#   No setup needed — the directory is auto-created by api_manager.py.
+#   No setup needed -- the directory is auto-created by api_manager.py.
+#
+# (google-auth ships as a dependency of gspread. If you skipped gspread,
+#  also run: pip3 install --user google-auth)
 
 # ============================================================
 # CRONTAB
@@ -183,6 +161,13 @@ crontab -l
 #   - rate limit file -> /dev/shm (RAM)
 #   - All logging in /dev/shm, only flushed on reboot
 #
+# Cloud storage:
+#   - DROPPED Google Drive file uploads (service accounts have zero storage
+#     quota -- 403 storageQuotaExceeded on every upload).
+#   - ALL cloud sync now goes to one Google Sheet via gspread:
+#       System Log / Fan Events / Weekly Reports / Lynis Snapshots.
+#   - outage_drain.py replays only Sheets rows (Drive handle removed).
+#
 # Power:
 #   - profile_scheduler exits instantly if no change needed
 #   - fan_logger exits instantly if /dev/shm/pi-bot missing
@@ -197,7 +182,7 @@ crontab -l
 # WIREGUARD VPN (Docker: wg-easy) -- one-time setup
 # ============================================================
 # Manually on the Pi (interactive, or with flags/env):
-#   python3 ~/secure-pi-bot/scripts/wireguard_setup.py \
+#   python3 ~/secure-pi-bot/scripts/wireguard_setup.py \\
 #       --host <public-ip-or-dyndns> --password <web-ui-pw>
 # Env alternatives: WG_HOST, WG_PASSWORD, WG_DEFAULT_DNS
 #
@@ -213,7 +198,7 @@ crontab -l
 # AdGuardHome service control (/adguard restart|stop|start|update) uses
 # 'AdGuardHome -s <verb>'. If your install needs root for that, allow alon
 # to run it passwordless (extend your polkit rule OR add a sudoers line):
-#   echo "alon ALL=(root) NOPASSWD: /opt/AdGuardHome/AdGuardHome -s *" | \
+#   echo "alon ALL=(root) NOPASSWD: /opt/AdGuardHome/AdGuardHome -s *" | \\
 #       sudo tee /etc/sudoers.d/pi-adguard
 # ...then change those four commands in modules/adguard.py to wrap the
 # binary with sudo (['sudo', AGH, '-s', '<verb>']).
