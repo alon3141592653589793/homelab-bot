@@ -91,15 +91,17 @@ def post_discord(text):
         except Exception:
             pass
 
+# Use --quick: versioning only needs the Hardening index + warnings, and the
+# full audit hangs for 3-5+ min on a Pi. Quick run is ~30-60s.
 try:
-    r = subprocess.run(["lynis", "audit", "system", "--no-colors"],
-                       capture_output=True, text=True, timeout=300)
+    r = subprocess.run(["lynis", "audit", "system", "--quick", "--no-colors"],
+                       capture_output=True, text=True, timeout=180)
     output = (r.stdout or r.stderr or "").strip()
 except FileNotFoundError:
     print("FAILURE: lynis not installed")
     sys.exit(1)
 except subprocess.TimeoutExpired:
-    print("FAILURE: lynis timed out")
+    print("FAILURE: lynis timed out (180s)")
     sys.exit(1)
 
 score = lynis_score(output)
