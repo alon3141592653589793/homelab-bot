@@ -524,7 +524,7 @@ print(
     id: "fan-logger",
     filename: "fan_logger.py",
     path: "~/secure-pi-bot/scripts/fan_logger.py",
-    description: "Logs fan ON/OFF transitions to /dev/shm (RAM). 60s boot delay. No SD writes. Flushed by compress_logs.py before reboot. Caps at 2000 lines.",
+    description: "Logs fan ON/OFF transitions to /dev/shm (RAM). 60s boot delay. No SD writes. Flushed by compress_logs.py before reboot. Caps at 2000 lines. Reads the real fan state from the gpio_fan hwmon (pwm1 nonzero = on); vcgencmd / legacy GPIO sysfs / temp inference are fallbacks only.",
     tags: ["fan", "logging", "thermal"],
     code: `import os
 import json
@@ -549,21 +549,38 @@ if not os.path.isdir(PIBOT_DIR):
     raise SystemExit(0)
 
 def get_fan_active() -> bool:
-    import subprocess
-    # vcgencmd get_fan — Pi 5 / official fan HAT
+    import glob, subprocess
+    # gpio-fan overlay (native driver): pwm1 nonzero == fan commanded on.
+    # This is the authoritative signal -- temp inference and vcgencmd are
+    # fallbacks only, and the legacy /sys/class/gpio/gpio14 path is gone.
+    for name_path in glob.glob("/sys/class/hwmon/hwmon*/name"):
+        try:
+            with open(name_path) as f:
+                if f.read().strip() != "gpio_fan":
+                    continue
+        except OSError:
+            continue
+        base = os.path.dirname(name_path)
+        try:
+            with open(f"{base}/pwm1") as f:
+                return int(f.read().strip()) > 0
+        except OSError:
+            continue
+    # vcgencmd get_fan — Pi 5 official fan HAT
     try:
         r = subprocess.run(["vcgencmd", "get_fan"], capture_output=True, text=True, timeout=3)
         if r.returncode == 0:
             return r.stdout.strip().endswith("=1")
     except Exception:
         pass
-    # GPIO sysfs (GPIO 14 default fan pin)
+    # GPIO sysfs (legacy GPIO 14 fan pin)
     try:
         with open("/sys/class/gpio/gpio14/value") as f:
             return f.read().strip() == "1"
     except OSError:
         pass
-    # Fallback: temperature inference
+    # Fallback: temperature inference (85% confidence only -- the real trip
+    # point may differ from 65C, so prefer the gpio_fan hwmon above).
     try:
         with open("/sys/class/thermal/thermal_zone0/temp") as f:
             return int(f.read()) >= 65000
