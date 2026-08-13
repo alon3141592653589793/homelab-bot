@@ -1039,6 +1039,7 @@ discord_ok = post(report)
 # --- Sync to Google Drive (versioned, keep last 4) ---
 KEY = "/home/alon/.secrets/gcp_service_account.json"
 SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
+UPLOADS_FOLDER_FILE = "/home/alon/.secrets/gdrive_uploads_folder_id.txt"
 DRIVE_READY = False
 try:
     from google.oauth2 import service_account
@@ -1060,6 +1061,14 @@ def sync_to_drive(body):
     header = {"Authorization": f"Bearer {creds.token}"}
     fname = f"weekly_report_{now.strftime('%Y%m%d_%H%M')}.txt"
     meta = {"name": fname, "mimeType": "text/plain"}
+    # Service accounts have no storage quota -- upload into the user-owned
+    # shared folder (gdrive_uploads_folder_id.txt) so it lands in your Drive.
+    try:
+        parent = open(UPLOADS_FOLDER_FILE).read().strip()
+        if parent:
+            meta["parents"] = [parent]
+    except OSError:
+        pass
     files = {"metadata": (fname + ".meta", json.dumps(meta), "application/json; charset=UTF-8"),
              "file": (fname, body, "text/plain")}
     try:
@@ -1078,11 +1087,17 @@ def sync_to_drive(body):
                               headers=header,
                               json={"type": "user", "emailAddress": email, "role": "reader"},
                               timeout=30)
-        # keep last 4 versions
+        # keep last 4 versions (scoped to the shared folder when set)
+        q = "name contains 'weekly_report_' and trashed=false"
+        try:
+            parent = open(UPLOADS_FOLDER_FILE).read().strip()
+            if parent:
+                q += f" and '{parent}' in parents"
+        except OSError:
+            pass
         api_manager.rate_limit("gdrive")
         lst = requests.get("https://www.googleapis.com/drive/v3/files", headers=header, timeout=30,
-                           params={"q": "name contains 'weekly_report_' and trashed=false",
-                                   "orderBy": "createdTime desc", "fields": "files(id,name)",
+                           params={"q": q, "orderBy": "createdTime desc", "fields": "files(id,name)",
                                    "pageSize": 20})
         if lst.status_code == 200:
             for old in lst.json().get("files", [])[4:]:

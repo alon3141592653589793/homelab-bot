@@ -23,11 +23,21 @@ import api_manager
 
 KEY_FILE = "/home/alon/.secrets/gcp_service_account.json"
 SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
+PARENT_FOLDER_FILE = "/home/alon/.secrets/gdrive_uploads_folder_id.txt"
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = "/home/alon/secure-pi-bot/logs"
 PREFIX = "lynis_snapshot_"
 
 os.makedirs(LOG_DIR, exist_ok=True)
+# Service accounts have NO storage quota -- uploads MUST land inside a real
+# user-owned folder shared (as Editor) with this service account. Read its ID
+# from gdrive_uploads_folder_id.txt; without it the upload 403s.
+def _load_parent_id():
+    try:
+        return open(PARENT_FOLDER_FILE).read().strip() or None
+    except OSError:
+        return None
+PARENT_FOLDER = _load_parent_id()
 DRIVE_READY = service_account is not None and os.path.exists(KEY_FILE)
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 CREDS = service_account.Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES) if DRIVE_READY else None
@@ -138,8 +148,11 @@ if not DRIVE_READY:
 
 # --- Drive path (keys configured) ---
 def list_snapshots():
+    q_parts = [f"name contains '{PREFIX}'", "trashed=false"]
+    if PARENT_FOLDER:
+        q_parts.append(f"'{PARENT_FOLDER}' in parents")
     r = drive("GET", "https://www.googleapis.com/drive/v3/files",
-              params={"q": f"name contains '{PREFIX}' and trashed=false", "orderBy": "createdTime desc",
+              params={"q": " and ".join(q_parts), "orderBy": "createdTime desc",
                       "fields": "files(id,name,createdTime)", "pageSize": 20})
     return r.json().get("files", []) if r.status_code == 200 else []
 
@@ -161,6 +174,8 @@ if snaps:
 analysis = run_ai_diff(prev_raw, output) if prev_raw is not None else "(baseline run -- first snapshot on Drive, nothing to diff against)"
 body = f"=== LYNIS SNAPSHOT {ts} ===\\n{output}\\n\\n=== AI CHANGE ANALYSIS ===\\n{analysis}\\n"
 meta = {"name": fname, "mimeType": "text/plain"}
+if PARENT_FOLDER:
+    meta["parents"] = [PARENT_FOLDER]
 multipart = {"metadata": (fname + ".meta", json.dumps(meta), "application/json; charset=UTF-8"),
              "file": (fname, body, "text/plain")}
 r = drive("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", files=multipart)
