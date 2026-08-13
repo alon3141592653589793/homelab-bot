@@ -844,7 +844,7 @@ print(out or "Logs synced to Google Sheets.")
     id: "weekly-report",
     filename: "weekly_report.py",
     path: "~/secure-pi-bot/scripts/weekly_report.py",
-    description: "Weekly report (Israel-time keyed, ISO-week idempotent): temp, fan. Posts to Discord + syncs a versioned copy to Google Drive (keep last 4); warns Discord if Drive sync fails >1 day. Day-of-week gate (Monday, Israel time) uses worldtimeapi -> system-clock fallback, not the Pi clock. Manual /weeklyreport uses --force to bypass guards. Can be disabled via /weeklyreport stop.",
+    description: "Weekly report (Israel-time keyed, ISO-week idempotent): temp, fan. Posts to Discord + appends the full report as a new row to the 'Weekly Reports' worksheet inside the same Google Sheet that log_sync.py uses (rolling, keep last 50). No Drive files -- service accounts have no storage quota (403 storageQuotaExceeded). Warns Discord if the Sheet sync fails >1 day. Day-of-week gate (Monday, Israel time) uses worldtimeapi -> system-clock fallback, not the Pi clock. Manual /weeklyreport uses --force to bypass guards. Can be disabled via /weeklyreport stop.",
     tags: ["report", "discord", "weekly"],
     code: `import os
 import sys
@@ -1029,92 +1029,78 @@ report = "\\n".join(lines)
 drive_body = f"=== WEEKLY REPORT {now.isoformat(timespec='seconds')} ===\\n{report}\\n"
 
 if TEST_MODE:
-    print(f"[TEST MODE] weekly report built ({len(report)} chars) -- Discord+Drive send skipped, state not persisted.")
+    print(f"[TEST MODE] weekly report built ({len(report)} chars) -- Discord+Sheets send skipped, state not persisted.")
     print(report)
     sys.exit(0)
 
 # --- Send to Discord (best-effort; failure no longer aborts Drive sync) ---
 discord_ok = post(report)
 
-# --- Sync to Google Drive (versioned, keep last 4) ---
-KEY = "/home/alon/.secrets/gcp_service_account.json"
-SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
-UPLOADS_FOLDER_FILE = "/home/alon/.secrets/gdrive_uploads_folder_id.txt"
-DRIVE_READY = False
+# --- Sync to Google Sheets: append a new row to the 'Weekly Reports' worksheet
+# Service accounts have NO storage quota -- uploading Drive files 403s with
+# storageQuotaExceeded. But appending to a user-owned shared Sheet works
+# because the SA isn't owning a new file, just adding rows to YOUR sheet.
+WR_KEY = "/home/alon/.secrets/gcp_service_account.json"
+WR_SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
+WR_WS = "Weekly Reports"
+WR_HEADERS = ["ts", "week", "uptime", "temp_avg_c", "temp_min_c", "temp_max_c", "fan_sessions", "fan_minutes", "spikes", "report"]
 try:
-    from google.oauth2 import service_account
-    from google.auth.transport import requests as gauth_requests
-    DRIVE_READY = os.path.exists(KEY)
+    import gspread
 except ImportError:
-    DRIVE_READY = False
+    gspread = None
+WR_READY = gspread is not None and os.path.exists(WR_KEY) and os.path.exists(WR_SHEET_ID_FILE)
 
-def sync_to_drive(body):
-    if not DRIVE_READY:
-        return False, "Drive keys/lib unavailable"
+def sync_to_sheet(report_text):
+    if not WR_READY:
+        return False, "gspread lib/keys/sheet-id unavailable"
     try:
-        # drive.file cannot reach UI-shared folders (404). Use full drive scope
-        # so the weekly report uploads into the shared "pi" folder.
-        creds = service_account.Credentials.from_service_account_file(
-            KEY, scopes=["https://www.googleapis.com/auth/drive"])
-        if not creds.valid or creds.expired:
-            creds.refresh(gauth_requests.Request())
-    except Exception as e:
-        return False, str(e)
-    header = {"Authorization": f"Bearer {creds.token}"}
-    fname = f"weekly_report_{now.strftime('%Y%m%d_%H%M')}.txt"
-    meta = {"name": fname, "mimeType": "text/plain"}
-    # Service accounts have no storage quota -- upload into the user-owned
-    # shared folder (gdrive_uploads_folder_id.txt) so it lands in your Drive.
-    try:
-        parent = open(UPLOADS_FOLDER_FILE).read().strip()
-        if parent:
-            meta["parents"] = [parent]
-    except OSError:
-        pass
-    files = {"metadata": (fname + ".meta", json.dumps(meta), "application/json; charset=UTF-8"),
-             "file": (fname, body, "text/plain")}
-    try:
-        api_manager.rate_limit("gdrive")
-        r = requests.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
-                          headers=header, files=files, timeout=30)
-        api_manager.record("gdrive", r.status_code < 400)
-        if r.status_code not in (200, 201):
-            return False, f"{r.status_code} {r.text[:120]}"
-        fid = r.json()["id"]
-        if os.path.exists(SHARE_EMAIL_FILE):
-            email = open(SHARE_EMAIL_FILE).read().strip()
-            if email:
-                api_manager.rate_limit("gdrive")
-                requests.post(f"https://www.googleapis.com/drive/v3/files/{fid}/permissions",
-                              headers=header,
-                              json={"type": "user", "emailAddress": email, "role": "reader"},
-                              timeout=30)
-        # keep last 4 versions (scoped to the shared folder when set)
-        q = "name contains 'weekly_report_' and trashed=false"
+        gc = gspread.service_account(filename=WR_KEY)
+        sh = gc.open_by_key(open(WR_SHEET_ID_FILE).read().strip())
         try:
-            parent = open(UPLOADS_FOLDER_FILE).read().strip()
-            if parent:
-                q += f" and '{parent}' in parents"
-        except OSError:
-            pass
-        api_manager.rate_limit("gdrive")
-        lst = requests.get("https://www.googleapis.com/drive/v3/files", headers=header, timeout=30,
-                           params={"q": q, "orderBy": "createdTime desc", "fields": "files(id,name)",
-                                   "pageSize": 20})
-        if lst.status_code == 200:
-            for old in lst.json().get("files", [])[4:]:
-                requests.delete(f"https://www.googleapis.com/drive/v3/files/{old['id']}",
-                                headers=header, timeout=20)
-        return True, fname
+            ws = sh.worksheet(WR_WS)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(WR_WS, rows=1, cols=len(WR_HEADERS))
+            ws.append_row(WR_HEADERS)
     except Exception as e:
         return False, str(e)
+    tavg = tmin = tmax = ""
+    if temps:
+        tavg = round(sum(temps) / len(temps), 1)
+        tmin = min(temps); tmax = max(temps)
+    week_label = now.strftime("%G-W%V")
+    spikes_str = "; ".join(
+        f"{datetime.fromisoformat(s.get('ts') or s.get('ts_start','')).strftime('%m/%d')}={s.get('temp_c') or s.get('temp_avg_c')}"
+        for s in (spikes[-10:] if spikes else [])
+    )
+    row = [now.isoformat(timespec="seconds"), week_label, uptime, tavg, tmin, tmax,
+           len(fan_sessions), int(total_fan_s // 60), spikes_str, report_text[:4000]]
+    try:
+        api_manager.rate_limit("gsheets")
+        ws.append_row(row, value_input_option="RAW")
+        api_manager.record("gsheets", True)
+        # Roll the window: keep the most recent 50 rows (header stays at row 1).
+        data = [r for r in ws.get_all_values() if r and r[0]]
+        if len(data) > 50:
+            ws.delete_rows(2, len(data) - 50 + 1)
+        return True, WR_WS
+    except Exception as e:
+        api_manager.record("gsheets", False)
+        return False, str(e)
 
-drive_ok, drive_msg = sync_to_drive(drive_body)
-if not drive_ok:
-    api_manager.queue_outage("gdrive", "weekly_report",
-        {"fname": f"weekly_report_{now.strftime('%Y%m%d_%H%M')}.txt", "body": drive_body})
+sheet_ok, sheet_msg = sync_to_sheet(report)
+if not sheet_ok:
+    # Failed append -> queue for outage_drain (payload shaped for handle_sheets).
+    api_manager.queue_outage("gsheets", "rows", {
+        "ws": WR_WS,
+        "rows": [[now.isoformat(timespec="seconds"), now.strftime("%G-W%V"), uptime,
+                  (round(sum(temps)/len(temps),1) if temps else ""),
+                  (min(temps) if temps else ""), (max(temps) if temps else ""),
+                  len(fan_sessions), int(total_fan_s//60),
+                  "; ".join(f"{datetime.fromisoformat(s.get('ts') or s.get('ts_start','')).strftime('%m/%d')}={s.get('temp_c') or s.get('temp_avg_c')}" for s in (spikes[-10:] if spikes else [])),
+                  report[:4000]]]
+    })
 
-# --- Drive-fail tracking: warn Discord if failing for > 1 day ---
+# --- Sheet-fail tracking: warn Discord if the sync fails for > 1 day ---
 ds = {}
 try:
     if os.path.exists(DRIVE_STATE):
@@ -1122,15 +1108,15 @@ try:
             ds = json.load(f)
 except (OSError, ValueError):
     pass
-if drive_ok:
+if sheet_ok:
     ds = {"fail_since": None}
 else:
     if not ds.get("fail_since"):
         ds["fail_since"] = now.isoformat()
-        ds["err"] = str(drive_msg)[:200]
+        ds["err"] = str(sheet_msg)[:200]
     age = (now - datetime.fromisoformat(ds["fail_since"])).total_seconds()
     if age > 86400:
-        post(f"**Weekly report Drive sync warning** [{now.strftime('%H:%M')}] -- failing for >1 day ({int(age//3600)}h). Last error: {ds.get('err','')}")
+        post(f"**Weekly report Sheet sync warning** [{now.strftime('%H:%M')}] -- failing for >1 day ({int(age//3600)}h). Last error: {ds.get('err','')}")
 try:
     with open(DRIVE_STATE, "w") as f:
         json.dump(ds, f)
@@ -1138,7 +1124,7 @@ except OSError:
     pass
 
 # --- Mark this Israel ISO-week posted (only if at least one channel succeeded) ---
-if discord_ok or drive_ok:
+if discord_ok or sheet_ok:
     state["week"] = this_week
     try:
         with open(STATE_FILE, "w") as f:

@@ -2,8 +2,8 @@ const entry = {
   id: "lynis-snapshot",
   filename: "lynis_snapshot.py",
   path: "~/secure-pi-bot/scripts/lynis_snapshot.py",
-  description: "Weekly Lynis snapshot to Google Drive (versioned, keep last 4). Change detection is now SCORE-ONLY: extracts the Lynis 'Hardening index' integer and saves a new version only when the score changes (first run = baseline). On a change, runs ai_debug --auto --web (Gemini + google_search grounding) to explain the diff and POSTS the analysis to Discord; the full snapshot (Lynis output + analysis) uploads to Drive and is shared with your email. Falls back to local SD-card text files (keep 4) when the service-account key is missing. Removes the old allowlist normalizer + small-fingerprint guard + monthly canary -- one number is all that matters. Rate-limited via api_manager.",
-  tags: ["lynis", "audit", "gdrive", "versioning", "ai", "web-search", "score"],
+  description: "Weekly Lynis snapshot. Change detection is SCORE-ONLY: extracts the Lynis 'Hardening index' integer and saves a new row only when the score changes (first run = baseline). On a change, runs ai_debug --auto --web (Gemini + google_search grounding) to explain the diff and POSTS the analysis to Discord; the full snapshot (ts, score, prev_score, analysis, raw lynis truncated) appends as a new row to the 'Lynis Snapshots' worksheet inside the same Google Sheet that log_sync.py uses. No Drive files -- service accounts have no storage quota (403 storageQuotaExceeded), but appending to a user-owned shared sheet works without quota. Falls back to local SD-card text files (keep 4) when the service-account key / sheet ID are missing. Rate-limited via api_manager.",
+  tags: ["lynis", "audit", "gsheets", "versioning", "ai", "web-search", "score"],
   code: `import os
 import sys
 import json
@@ -13,51 +13,37 @@ import subprocess
 from datetime import datetime
 
 try:
-    from google.oauth2 import service_account
-    from google.auth.transport import requests as gauth_requests
+    import gspread
 except ImportError:
-    service_account = None
+    gspread = None
 
 import requests as httpreq
 import api_manager
 
 KEY_FILE = "/home/alon/.secrets/gcp_service_account.json"
-SHARE_EMAIL_FILE = "/home/alon/.secrets/gdrive_share_email.txt"
-PARENT_FOLDER_FILE = "/home/alon/.secrets/gdrive_uploads_folder_id.txt"
+SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = "/home/alon/secure-pi-bot/logs"
 PREFIX = "lynis_snapshot_"
+# Sheets cells cap ~50000 chars; keep raw lynis safely truncated for a cell.
+MAX_RAW = 4000
+WS_TITLE = "Lynis Snapshots"
+HEADERS = ["ts", "score", "prev_score", "changed", "ai_analysis", "lynis_raw_truncated"]
 
 os.makedirs(LOG_DIR, exist_ok=True)
-# Service accounts have NO storage quota -- uploads MUST land inside a real
-# user-owned folder shared (as Editor) with this service account. Read its ID
-# from gdrive_uploads_folder_id.txt; without it the upload 403s.
-def _load_parent_id():
-    try:
-        return open(PARENT_FOLDER_FILE).read().strip() or None
-    except OSError:
-        return None
-PARENT_FOLDER = _load_parent_id()
-DRIVE_READY = service_account is not None and os.path.exists(KEY_FILE)
-# NOTE: drive.file scope CANNOT see folders shared with the SA via the Drive
-# UI -- it only sees files the SA itself created/uploaded. A user-shared "pi"
-# folder returns 404 under drive.file. Using the full drive scope so uploads
-# land in the shared folder the user already set up.
-SCOPES = ["https://www.googleapis.com/auth/drive"]
-CREDS = service_account.Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES) if DRIVE_READY else None
+SHEETS_READY = gspread is not None and os.path.exists(KEY_FILE) and os.path.exists(SHEET_ID_FILE)
 
-def drive(method, url, **kw):
-    api_manager.rate_limit("gdrive")
-    if not CREDS.valid or CREDS.expired:
-        CREDS.refresh(gauth_requests.Request())
-    headers = {"Authorization": f"Bearer {CREDS.token}"}
-    headers.update(kw.pop("headers", {}))
-    r = httpreq.request(method, url, headers=headers, timeout=30, **kw)
-    api_manager.record("gdrive", r.status_code < 400)
-    return r
+def _sheet():
+    gc = gspread.service_account(filename=KEY_FILE)
+    sh = gc.open_by_key(open(SHEET_ID_FILE).read().strip())
+    try:
+        return sh.worksheet(WS_TITLE)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(WS_TITLE, rows=1, cols=len(HEADERS))
+        ws.append_row(HEADERS)
+        return ws
 
 def lynis_score(text):
-    # Lynis prints: "  Hardening index : 64 [##############   ]"
     m = re.search(r'Hardening index\\s*:\\s*(\\d+)', text)
     return int(m.group(1)) if m else None
 
@@ -110,7 +96,6 @@ except subprocess.TimeoutExpired:
 
 score = lynis_score(output)
 ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-fname = f"{PREFIX}{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
 
 if score is None:
     msg = "Lynis output has no 'Hardening index' line -- cannot compare. No snapshot saved."
@@ -119,28 +104,28 @@ if score is None:
     sys.exit(1)
 
 if os.getenv("PI_TEST_MODE"):
-    print(f"[TEST MODE] Lynis score={score} -- Drive upload + Discord post skipped.")
+    print(f"[TEST MODE] Lynis score={score} -- Sheet append + Discord post skipped.")
     sys.exit(0)
 
-# Stored file format: "<header>\\n<raw lynis>\\n\\n=== AI CHANGE ANALYSIS ===\\n<analysis>\\n"
-def _extract_output(body):
-    marker = "\\n=== AI CHANGE ANALYSIS ==="
-    pre = body.split(marker)[0]
-    nl = pre.find("\\n")
-    return pre[nl + 1:].rstrip("\\n") if nl != -1 else pre
-
-# --- SD-card fallback (until service-account key is configured) ---
-if not DRIVE_READY:
+# --- SD-card fallback (until service-account key / sheet ID are configured) ---
+if not SHEETS_READY:
     files = sorted(glob.glob(f"{LOG_DIR}/{PREFIX}*.txt"))
     prev_body = open(files[-1]).read() if files else None
-    prev_raw = _extract_output(prev_body) if prev_body else None
+    # strip header line to recover just the raw lynis block + analysis
+    if prev_body:
+        pre = prev_body.split("\\n\\n=== AI CHANGE ANALYSIS ===")[0]
+        nl = pre.find("\\n")
+        prev_raw = pre[nl + 1:].rstrip("\\n") if nl != -1 else pre
+    else:
+        prev_raw = None
     prev_score = lynis_score(prev_raw) if prev_raw else None
     if prev_score is not None and prev_score == score:
         print(f"Lynis unchanged (score={score}, SD fallback -- no new version).")
         sys.exit(0)
     analysis = "(baseline run -- first snapshot)" if prev_raw is None else run_ai_diff(prev_raw, output)
-    body = f"=== LYNIS SNAPSHOT {ts} ===\\n{output}\\n\\n=== AI CHANGE ANALYSIS ===\\n{analysis}\\n"
-    with open(os.path.join(LOG_DIR, fname), "w") as f:
+    body = (f"=== LYNIS SNAPSHOT {ts} ===\\n{output}\\n\\n"
+            f"=== AI CHANGE ANALYSIS ===\\n{analysis}\\n")
+    with open(os.path.join(LOG_DIR, f"{PREFIX}{datetime.now().strftime('%Y%m%d_%H%M')}.txt"), "w") as f:
         f.write(body)
     for old in files[:-3]:
         try:
@@ -149,61 +134,53 @@ if not DRIVE_READY:
             pass
     if prev_raw is not None:
         post_discord(f"**Lynis change analysis (SD fallback)** [{ts}] -- score {prev_score} -> {score}\\n{analysis}")
-    print(f"Lynis {'changed' if prev_raw is not None else 'baseline'} -> {fname} (SD fallback, kept last 4 locally). score={score}")
+    print(f"Lynis {'changed' if prev_raw is not None else 'baseline'} (SD fallback, kept last 4 locally). score={score}")
     sys.exit(0)
 
-# --- Drive path (keys configured) ---
-def list_snapshots():
-    q_parts = [f"name contains '{PREFIX}'", "trashed=false"]
-    if PARENT_FOLDER:
-        q_parts.append(f"'{PARENT_FOLDER}' in parents")
-    r = drive("GET", "https://www.googleapis.com/drive/v3/files",
-              params={"q": " and ".join(q_parts), "orderBy": "createdTime desc",
-                      "fields": "files(id,name,createdTime)", "pageSize": 20})
-    return r.json().get("files", []) if r.status_code == 200 else []
-
-def download_text(fid):
-    r = drive("GET", f"https://www.googleapis.com/drive/v3/files/{fid}", params={"alt": "media"})
-    return r.text if r.status_code == 200 else ""
-
-snaps = list_snapshots()
+# --- Sheets path (keys + sheet ID configured) ---
+ws = _sheet()
+rows = ws.get_all_values()
+data = [r for r in rows[1:] if r and r[0]]
 prev_score = None
 prev_raw = None
-if snaps:
-    prev = download_text(snaps[0]["id"])
-    prev_raw = _extract_output(prev)
-    prev_score = lynis_score(prev_raw) if prev_raw else None
+if data:
+    last = data[-1]
+    if len(last) > 5 and last[1]:
+        try:
+            prev_score = int(last[1])
+        except ValueError:
+            prev_score = None
+        prev_raw = last[5] or ""
     if prev_score is not None and prev_score == score:
-        print(f"Lynis unchanged -- no new version (score={score}, {len(snaps)} snapshots on Drive).")
+        print(f"Lynis unchanged -- no new row (score={score}, {len(data)} snapshots in sheet).")
         sys.exit(0)
 
-analysis = run_ai_diff(prev_raw, output) if prev_raw is not None else "(baseline run -- first snapshot on Drive, nothing to diff against)"
-body = f"=== LYNIS SNAPSHOT {ts} ===\\n{output}\\n\\n=== AI CHANGE ANALYSIS ===\\n{analysis}\\n"
-meta = {"name": fname, "mimeType": "text/plain"}
-if PARENT_FOLDER:
-    meta["parents"] = [PARENT_FOLDER]
-multipart = {"metadata": (fname + ".meta", json.dumps(meta), "application/json; charset=UTF-8"),
-             "file": (fname, body, "text/plain")}
-r = drive("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", files=multipart)
-if r.status_code not in (200, 201):
-    api_manager.queue_outage("gdrive", "upload", {"fname": fname, "body": body})
-    print(f"FAILURE: Drive upload {r.status_code} ({r.text[:200]}) -- queued to outage buffer.")
+analysis = run_ai_diff(prev_raw, output) if prev_raw else "(baseline run -- first snapshot in sheet, nothing to diff against)"
+changed = "Y" if prev_raw else "baseline"
+new_row = [ts, score, prev_score if prev_score is not None else "", changed, analysis, output[:MAX_RAW]]
+
+api_manager.rate_limit("gsheets")
+try:
+    ws.append_row(new_row, value_input_option="RAW")
+    api_manager.record("gsheets", True)
+except Exception as e:
+    api_manager.record("gsheets", False)
+    # Payload shaped for outage_drain handle_sheets: {"ws": <title>, "rows": [[...]]}
+    api_manager.queue_outage("gsheets", "rows", {"ws": WS_TITLE, "rows": [new_row]})
+    print(f"FAILURE: Sheets append ({e}) -- queued to outage buffer.")
     sys.exit(1)
-file_id = r.json()["id"]
 
-if os.path.exists(SHARE_EMAIL_FILE):
-    email = open(SHARE_EMAIL_FILE).read().strip()
-    if email:
-        drive("POST", f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
-              json={"type": "user", "emailAddress": email, "role": "reader"})
+# Trim to the most recent 50 snapshots (roll the window; keep header at row 1).
+extra = len(data) - 50 + 1  # +1 because we just added one, so keep last 50 incl. this one
+if extra > 0:
+    try:
+        ws.delete_rows(2, 1 + extra)
+    except Exception:
+        pass
 
-to_delete = snaps[3:]
-for old in to_delete:
-    drive("DELETE", f"https://www.googleapis.com/drive/v3/files/{old['id']}")
-
-if snaps:
+if prev_raw:
     post_discord(f"**Lynis change analysis** [{ts}] -- score {prev_score} -> {score}\\n{analysis}")
-print(f"Lynis {'changed' if snaps else 'baseline'} -> uploaded {fname} to Drive (score {prev_score} -> {score}); removed {len(to_delete)} old version(s).")
+print(f"Lynis {'changed' if prev_raw else 'baseline'} -> appended row to '{WS_TITLE}' (score {prev_score} -> {score}); {len(data)+1} snapshots in sheet.")
 `,
 };
 
