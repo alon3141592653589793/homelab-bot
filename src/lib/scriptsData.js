@@ -223,6 +223,10 @@ import subprocess
 from modules.runner import run_script, confirm_and_run
 
 LOGGING_FLAG = "/home/alon/secure-pi-bot/.logging_enabled"
+LED_CTL = ["sudo", "-n", "/usr/local/bin/led_ctl"]
+
+def _led_ctl(mode):
+    return subprocess.run(LED_CTL + [mode], capture_output=True, text=True, timeout=10)
 
 async def handle_reactive_command(client, message):
     if os.path.exists("/dev/shm/pi-bot/.testall_running"):
@@ -331,25 +335,16 @@ async def handle_reactive_command(client, message):
         await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
 
     elif content == "/leds off":
-        try:
-            open("/dev/shm/pi-bot/led_override", "w").write("off")
-            await message.channel.send("Leds forced OFF until reboot (sleep mode). /leds auto to resume schedule.")
-        except OSError as e:
-            await message.channel.send(f"Error: {e}")
+        r = _led_ctl("off")
+        await message.channel.send("LEDs forced OFF until reboot (dark for your sleep). /leds auto to resume." if r.returncode == 0 else "LEDs set off but couldn't apply now -- need /usr/local/bin/led_ctl in sudoers (see setup). They'll apply on the next pi-leds poll if the daemon runs.")
 
     elif content == "/leds on":
-        try:
-            open("/dev/shm/pi-bot/led_override", "w").write("on")
-            await message.channel.send("Leds forced ON until reboot. /leds auto to resume schedule.")
-        except OSError as e:
-            await message.channel.send(f"Error: {e}")
+        r = _led_ctl("on")
+        await message.channel.send("LEDs forced ON until reboot. /leds auto to resume." if r.returncode == 0 else "LEDs set on but couldn't apply now -- need /usr/local/bin/led_ctl in sudoers (see setup).")
 
     elif content == "/leds auto":
-        try:
-            open("/dev/shm/pi-bot/led_override", "w").write("auto")
-            await message.channel.send("Leds back to automatic schedule (off 22:00-10:00; on for SSH + 1h grace).")
-        except OSError as e:
-            await message.channel.send(f"Error: {e}")
+        r = _led_ctl("auto")
+        await message.channel.send("LEDs back to automatic schedule (off 22:00-10:00 for your sleep; on for SSH + 1h grace)." if r.returncode == 0 else "LEDs back to auto but couldn't write override -- need /usr/local/bin/led_ctl in sudoers (see setup).")
 
     elif content in ("/leds", "/leds status"):
         await run_script(message, "led_status.py", "Reading LED state...", timeout=10)
@@ -374,7 +369,7 @@ async def handle_reactive_command(client, message):
             "/cooldown             - Stop non-essential services to shed heat\\n"
             "\\n== Thermal / Fan / LEDs ==\\n"
             "/fanreport            - Show fan activation log\\n"
-            "/leds on|off|auto     - Force LEDs on/off (until reboot) or auto schedule\\n"
+            "/leds on|off|auto     - Lights on/off until reboot (off = dark for your sleep) / auto\\n"
             "/leds                 - Show LED mode + SSH grace state\\n"
             "\\n== Diagnostics ==\\n"
             "/diag                 - Network + SSH + WiFi diagnostics\\n"

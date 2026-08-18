@@ -2,15 +2,16 @@ const manager = {
   id: "led-manager",
   filename: "led_manager.py",
   path: "~/secure-pi-bot/scripts/led_manager.py",
-  description: "Persistent LED scheduler (systemd root service). Priority order: /leds on|off commands (until reboot) FIRST, then SSH activity, then the day/night schedule. Auto schedule = LEDs ON 10:00-22:00, OFF 22:00-10:00 -- but ON while an SSH session is active and for 1h after the last disconnect. /leds off forces dark even while SSH'd in (sleep mode); /leds on forces on even at night. Polls every 10s; runs as root (systemd unit in header comment).",
+  description: "Persistent LED scheduler (systemd root service). Priority: /leds override (until reboot) > SSH activity > day/night schedule. Auto = lights ON 10:00-22:00, OFF 22:00-10:00 ('sleep' = YOUR sleep -- dark room, NOT the Pi sleeping), but ON while SSH'd in + 1h grace. /leds on|off are applied instantly by /usr/local/bin/led_ctl (root, via sudoers) so they work WITHOUT this daemon; the daemon only owns the automatic schedule + SSH grace. Polls 10s; runs as root (systemd unit in header).",
   tags: ["leds", "sleep", "ssh", "systemd", "daemon"],
   code: `#!/usr/bin/env python3
-# LED sleep scheduler + SSH grace daemon (run as root via systemd service).
+# LED day/night + SSH grace scheduler ("sleep" = YOUR sleep -- lights off in
+# your room, NOT the Pi sleeping). Run as root via systemd service.
 #
 # One-time setup (as root):
 #   cat > /etc/systemd/system/pi-leds.service << 'UNIT'
 #   [Unit]
-#   Description=Pi LED sleep/SSH scheduler
+#   Description=Pi LED day/night + SSH scheduler
 #   After=network.target
 #   [Service]
 #   Type=simple
@@ -26,6 +27,7 @@ const manager = {
 
 import os
 import time
+import glob
 import subprocess
 from datetime import datetime
 
@@ -36,8 +38,8 @@ PREV_SSH = f"{SHM}/led_prev_ssh"
 ACTUAL = f"{SHM}/led_actual"
 os.makedirs(SHM, exist_ok=True)
 
-LEDS = ["/sys/class/leds/led0", "/sys/class/leds/led1"]
-SLEEP_START = 22  # LEDs off from 22:00 ...
+# "Sleep" = YOUR sleep (lights off in your room), NOT the Pi sleeping.
+SLEEP_START = 22  # lights off from 22:00 ...
 SLEEP_END = 10    # ... until 10:00
 
 def ssh_active():
@@ -59,12 +61,18 @@ def read_file(path, default=""):
         return default
 
 def write_leds(on):
-    for path in LEDS:
-        if not os.path.exists(path):
+    # Flip EVERY /sys/class/leds/* node so the red PWR LED turns off too. Its
+    # default trigger is "default-on" and holds it lit; trigger=none first
+    # makes brightness writable -- that's what actually turns the red one off.
+    for path in glob.glob("/sys/class/leds/*"):
+        if not os.path.isdir(path):
             continue
         try:
             with open(f"{path}/trigger", "w") as f:
-                f.write("none")  # stop heartbeat/act trigger so brightness sticks
+                f.write("none")
+        except OSError:
+            pass
+        try:
             with open(f"{path}/brightness", "w") as f:
                 f.write("255" if on else "0")
         except OSError:
@@ -99,7 +107,7 @@ while True:
 
     # Priority: command (override) -> SSH -> day/night schedule.
     if override == "off":
-        on = False        # command: force dark (sleep) -- beats SSH
+        on = False        # command: lights off (your sleep) -- beats SSH
     elif override == "on":
         on = True         # command: force on -- beats schedule
     elif ssh or now < grace_until:
@@ -125,10 +133,11 @@ const status = {
   id: "led-status",
   filename: "led_status.py",
   path: "~/secure-pi-bot/scripts/led_status.py",
-  description: "Reads the /leds override mode + actual LED brightness + SSH grace state for the /leds command. Runs as alon (reads sysfs brightness + the /dev/shm state files the root daemon writes).",
+  description: "Reads the /leds override mode + actual LED brightness (all /sys/class/leds/*) + SSH grace state. Runs as alon (sysfs brightness is world-readable; /dev/shm state files are 0666). 'sleep' = your sleep, not the Pi's.",
   tags: ["leds", "status", "discord"],
   code: `import os
 import time
+import glob
 import subprocess
 from datetime import datetime
 
@@ -144,7 +153,7 @@ def read(p, d=""):
         return d
 
 def led_on():
-    for p in ["/sys/class/leds/led0", "/sys/class/leds/led1"]:
+    for p in glob.glob("/sys/class/leds/*"):
         try:
             with open(f"{p}/brightness") as f:
                 if f.read().strip() != "0":
@@ -174,9 +183,60 @@ remain = ""
 if grace > time.time():
     remain = f" | SSH grace {int((grace - time.time()) // 60)}m left"
 
-print(f"**Leds** [{datetime.now().strftime('%H:%M')}]\\nMode: {override} | Actual: {actual}\\nSSH active: {'yes' if ssh else 'no'}{remain}\\nSleep window (22:00-10:00): {'yes' if sleep else 'no'}\\nCommands: /leds off | /leds on | /leds auto")
+print(f"**LEDs** [{datetime.now().strftime('%H:%M')}]\\nMode: {override} | Actual: {actual}\\nSSH active: {'yes' if ssh else 'no'}{remain}\\nYour sleep window (22:00-10:00): {'yes' if sleep else 'no'}\\nCommands: /leds off | /leds on | /leds auto")
 `,
 };
 
-const ledEntries = [manager, status];
+const ctl = {
+  id: "led-ctl",
+  filename: "led_ctl.py",
+  path: "/usr/local/bin/led_ctl",
+  description: "Immediate LED control helper, run as root via the sudoers rule in setup (from the Discord /leds on|off|auto commands). Applies brightness to EVERY /sys/class/leds/* so it flips the red PWR LED too -- the red's default trigger is 'default-on' and holds it lit; led_ctl flips trigger to 'none' first, then brightness, which is what actually turns it off. Also writes /dev/shm/pi-bot/led_override (RAM -> cleared on reboot -> auto schedule resumes) so the pi-leds daemon keeps honoring it until reboot. /leds off = lights off for YOUR sleep, not the Pi sleeping. Works with or without the daemon.",
+  tags: ["leds", "root", "sudoers", "helper"],
+  code: `#!/usr/bin/env python3
+# Immediate LED control. Run as root (via the sudoers rule, from the Discord
+# bot's /leds on|off|auto commands, or directly). Applies brightness to ALL
+# /sys/class/leds/* so the red PWR LED flips too, and writes the override flag
+# in /dev/shm (RAM -> cleared on reboot -> auto schedule resumes).
+import os
+import sys
+import glob
+
+SHM = "/dev/shm/pi-bot"
+OVERRIDE = f"{SHM}/led_override"
+
+def apply_brightness(on):
+    # While a trigger (mmc/act/default-on/heartbeat) owns the LED it ignores
+    # brightness writes. trigger=none first, then brightness is writable --
+    # that's what actually turns the red PWR LED off (default-on holds it lit).
+    for p in glob.glob("/sys/class/leds/*"):
+        try:
+            with open(f"{p}/trigger", "w") as f:
+                f.write("none")
+        except OSError:
+            pass
+        try:
+            with open(f"{p}/brightness", "w") as f:
+                f.write("255" if on else "0")
+        except OSError:
+            pass
+
+mode = (sys.argv[1] if len(sys.argv) > 1 else "auto").lower()
+os.makedirs(SHM, exist_ok=True)
+if mode in ("on", "off", "auto"):
+    try:
+        with open(OVERRIDE, "w") as f:
+            f.write(mode)
+    except OSError:
+        pass
+if mode == "on":
+    apply_brightness(True)
+elif mode == "off":
+    apply_brightness(False)
+# auto: just set the flag; the pi-leds daemon reconciles the schedule.
+print(f"led override -> {mode}")
+`,
+};
+
+const ledEntries = [manager, ctl, status];
 export default ledEntries;

@@ -58,6 +58,37 @@ POLKIT
 sudo systemctl restart polkit
 
 # ============================================================
+# LED CONTROL -- root helper + sudoers (lets /leds change lights NOW)
+# ============================================================
+# /leds off|on|auto run /usr/local/bin/led_ctl (root, via sudoers) so the
+# lights change immediately -- incl. the red PWR LED (its default trigger is
+# "default-on" and holds it lit; led_ctl flips trigger to "none" first). The
+# override lives in /dev/shm (RAM) so it clears on reboot -> auto resumes.
+# "off"/"sleep" = YOUR sleep (dark room), NOT the Pi sleeping.
+sudo cp /home/alon/secure-pi-bot/scripts/led_ctl.py /usr/local/bin/led_ctl
+sudo chmod 755 /usr/local/bin/led_ctl
+echo "alon ALL=(root) NOPASSWD: /usr/local/bin/led_ctl" | sudo tee /etc/sudoers.d/pi-leds
+sudo visudo -c   # syntax check -- a bad sudoers line can lock you out
+
+# ============================================================
+# LED AUTO SCHEDULE (optional root systemd daemon)
+# ============================================================
+# Only needed if you want lights to follow the day/night + SSH schedule by
+# themselves. /leds commands work WITHOUT it (led_ctl applies instantly).
+#   cat > /etc/systemd/system/pi-leds.service << 'UNIT'
+#   [Unit]
+#   Description=Pi LED day/night + SSH scheduler
+#   After=network.target
+#   [Service]
+#   Type=simple
+#   ExecStart=/usr/bin/python3 -u /home/alon/secure-pi-bot/scripts/led_manager.py
+#   Restart=always
+#   [Install]
+#   WantedBy=multi-user.target
+#   UNIT
+#   systemctl daemon-reload && systemctl enable --now pi-leds
+
+# ============================================================
 # DIRECTORIES + LOGGING ENABLE
 # ============================================================
 mkdir -p /home/alon/secure-pi-bot/logs/weekly_reports
