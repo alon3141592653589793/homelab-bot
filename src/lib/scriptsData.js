@@ -13,6 +13,7 @@ import paramsEntry from "./scripts/paramsEntry";
 import systemFixesEntry from "./scripts/systemFixesEntry";
 import lynisSnapshotEntry from "./scripts/lynisSnapshotEntry";
 import ledEntries from "./scripts/ledEntries";
+import diagEntries from "./scripts/diagEntries";
 
 const scripts = [
   {
@@ -353,6 +354,15 @@ async def handle_reactive_command(client, message):
     elif content in ("/leds", "/leds status"):
         await run_script(message, "led_status.py", "Reading LED state...", timeout=10)
 
+    elif content == "/diag":
+        await run_script(message, "netdiag.py", "Running network diagnostics...", timeout=30)
+
+    elif content == "/diskhealth":
+        await run_script(message, "disk_health.py", "Checking SD card health...", timeout=20)
+
+    elif content == "/logs" or raw.lower().startswith("/logs "):
+        await run_script(message, "log_tail.py", "", args=raw.split()[1:], timeout=15)
+
     elif content == "/help":
         await message.channel.send(
             "Available commands:\\n"
@@ -377,6 +387,9 @@ async def handle_reactive_command(client, message):
             "/parameters           - List current toggle/setting values\\n"
             "/leds on|off|auto     - Force LEDs on/off (until reboot) or auto schedule\\n"
             "/leds                 - Show LED mode + SSH grace state\\n"
+            "/diag                 - Network + SSH + WiFi diagnostics\\n"
+            "/diskhealth           - SD card health (dmesg, ro, smart)\\n"
+            "/logs <name> [n]      - Tail any log file (/logs to list)\\n"
             "Side channels         - #adguard -> /adguard help  |  #vpn -> /vpn help\\n"
             "/help                 - This message"
         )
@@ -1663,6 +1676,7 @@ print(f"Synced {len(sys_rows)} system + {len(fan_rows)} fan rows to {dest}")
   setupEntry,
   systemFixesEntry,
   ...ledEntries,
+  ...diagEntries,
 ];
 
 export default scripts;
