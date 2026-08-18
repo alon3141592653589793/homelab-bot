@@ -12,6 +12,7 @@ import bootDiagEntry from "./scripts/bootDiagEntry";
 import paramsEntry from "./scripts/paramsEntry";
 import systemFixesEntry from "./scripts/systemFixesEntry";
 import lynisSnapshotEntry from "./scripts/lynisSnapshotEntry";
+import ledEntries from "./scripts/ledEntries";
 
 const scripts = [
   {
@@ -328,6 +329,30 @@ async def handle_reactive_command(client, message):
     elif content == "/testall":
         await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
 
+    elif content == "/leds off":
+        try:
+            open("/dev/shm/pi-bot/led_override", "w").write("off")
+            await message.channel.send("Leds forced OFF until reboot (sleep mode). /leds auto to resume schedule.")
+        except OSError as e:
+            await message.channel.send(f"Error: {e}")
+
+    elif content == "/leds on":
+        try:
+            open("/dev/shm/pi-bot/led_override", "w").write("on")
+            await message.channel.send("Leds forced ON until reboot. /leds auto to resume schedule.")
+        except OSError as e:
+            await message.channel.send(f"Error: {e}")
+
+    elif content == "/leds auto":
+        try:
+            open("/dev/shm/pi-bot/led_override", "w").write("auto")
+            await message.channel.send("Leds back to automatic schedule (off 22:00-10:00; on for SSH + 1h grace).")
+        except OSError as e:
+            await message.channel.send(f"Error: {e}")
+
+    elif content in ("/leds", "/leds status"):
+        await run_script(message, "led_status.py", "Reading LED state...", timeout=10)
+
     elif content == "/help":
         await message.channel.send(
             "Available commands:\\n"
@@ -350,6 +375,8 @@ async def handle_reactive_command(client, message):
             "/testall              - Run full test suite (posts to #testing)\\n"
             "/boot                 - Boot/reboot history + skip-cause diagnosis\\n"
             "/parameters           - List current toggle/setting values\\n"
+            "/leds on|off|auto     - Force LEDs on/off (until reboot) or auto schedule\\n"
+            "/leds                 - Show LED mode + SSH grace state\\n"
             "Side channels         - #adguard -> /adguard help  |  #vpn -> /vpn help\\n"
             "/help                 - This message"
         )
@@ -1635,6 +1662,7 @@ print(f"Synced {len(sys_rows)} system + {len(fan_rows)} fan rows to {dest}")
   },
   setupEntry,
   systemFixesEntry,
+  ...ledEntries,
 ];
 
 export default scripts;
