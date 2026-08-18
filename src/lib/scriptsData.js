@@ -366,31 +366,37 @@ async def handle_reactive_command(client, message):
     elif content == "/help":
         await message.channel.send(
             "Available commands:\\n"
-            "/status               - System metrics\\n"
-            "/cooldown             - Stop non-essential services\\n"
-            "/restart              - Reboot Pi (requires confirmation)\\n"
+            "\\n== System & Power ==\\n"
+            "/status               - Temp/CPU/RAM/IP/uptime\\n"
+            "/fastfetch            - Pretty system summary\\n"
+            "/restart (/reboot)    - Reboot Pi (requires confirmation)\\n"
             "/shutdown             - Power off Pi (requires confirmation)\\n"
+            "/cooldown             - Stop non-essential services to shed heat\\n"
+            "\\n== Thermal / Fan / LEDs ==\\n"
             "/fanreport            - Show fan activation log\\n"
-            "/apifails             - API call failure rate (last 7 days)\\n"
-            "/lynis                - Run Lynis security audit now\\n"
-            "/weeklyreport         - Post weekly summary now\\n"
-            "/weeklyreport stop    - Disable scheduled weekly reports\\n"
-            "/weeklyreport start   - Re-enable scheduled weekly reports\\n"
-            "/logging start|stop   - Toggle system logger\\n"
-            "/profile              - Show CPU performance profile\\n"
-            "/setprofile restricted|unlimited  - Switch CPU profile\\n"
-            "/fastfetch            - Run fastfetch\\n"
-            "/updates start|stop   - Pause or resume automatic apt upgrade + reboot\\n"
-            "/aidebug <question>   - Conversational AI diagnostic\\n"
-            "/testall              - Run full test suite (posts to #testing)\\n"
-            "/boot                 - Boot/reboot history + skip-cause diagnosis\\n"
-            "/parameters           - List current toggle/setting values\\n"
             "/leds on|off|auto     - Force LEDs on/off (until reboot) or auto schedule\\n"
             "/leds                 - Show LED mode + SSH grace state\\n"
+            "\\n== Diagnostics ==\\n"
             "/diag                 - Network + SSH + WiFi diagnostics\\n"
-            "/diskhealth           - SD card health (dmesg, ro, smart)\\n"
+            "/boot                 - Boot/reboot history + skip-cause diagnosis\\n"
+            "/diskhealth           - SD card health (dmesg, read-only, smart)\\n"
             "/logs <name> [n]      - Tail any log file (/logs to list)\\n"
-            "Side channels         - #adguard -> /adguard help  |  #vpn -> /vpn help\\n"
+            "\\n== Security ==\\n"
+            "/lynis                - Run Lynis security audit now\\n"
+            "\\n== Reports & API ==\\n"
+            "/weeklyreport         - Post weekly summary now\\n"
+            "/weeklyreport start|stop - Enable/disable scheduled weekly reports\\n"
+            "/apifails             - API call failure rate (last 7 days)\\n"
+            "\\n== Config / Profile / Toggles ==\\n"
+            "/parameters           - Current toggle/setting values (aliases /params, /paramters)\\n"
+            "/profile              - Show CPU performance profile\\n"
+            "/setprofile restricted|unlimited  - Switch CPU profile\\n"
+            "/logging start|stop   - Toggle system logger\\n"
+            "/updates start|stop   - Pause or resume automatic apt upgrade + reboot\\n"
+            "\\n== Advanced ==\\n"
+            "/aidebug <question>   - Conversational AI diagnostic (optional: model prefix)\\n"
+            "/testall              - Run full test suite (posts to #testing)\\n"
+            "\\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\\n"
             "/help                 - This message"
         )
 `,
@@ -1055,8 +1061,6 @@ if spikes:
 lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total")
 
 report = "\\n".join(lines)
-drive_body = f"=== WEEKLY REPORT {now.isoformat(timespec='seconds')} ===\\n{report}\\n"
-
 if TEST_MODE:
     print(f"[TEST MODE] weekly report built ({len(report)} chars) -- Discord+Sheets send skipped, state not persisted.")
     print(report)
@@ -1161,7 +1165,7 @@ if discord_ok or sheet_ok:
     except OSError:
         pass
 else:
-    print("Weekly report: both Discord and Drive failed; not marking week posted (will retry next eligible run).")
+    print("Weekly report: both Discord and Sheets failed; not marking week posted (will retry next eligible run).")
 
 print("Weekly report sent.")
 `,

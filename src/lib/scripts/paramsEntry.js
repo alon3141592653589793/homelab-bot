@@ -2,7 +2,7 @@ const entry = {
   id: "params",
   filename: "params.py",
   path: "~/secure-pi-bot/scripts/params.py",
-  description: "Invoked by /parameters (aliases /params, /paramters). Lists only the user-facing toggles/settings and their CURRENT state -- auto updates+reboot, system logger, weekly report, nightly maintenance, CPU profile (override + actual freq/gov + scheduler vs manual), thermal alert threshold, /testall lock, AdGuard/VPN channel routing, last apt-upgrade, uptime. Does NOT dump internal constants/paths. Read-only.",
+  description: "Invoked by /parameters (aliases /params, /paramters). Lists only the user-facing toggles/settings and their CURRENT state -- auto updates+reboot, system logger, weekly report, nightly maintenance, CPU profile (override + actual freq/gov + scheduler vs manual), thermal alert threshold, /testall lock, LED sleep mode, AdGuard/VPN channel routing, last apt-upgrade, uptime. Does NOT dump internal constants/paths. Read-only.",
   tags: ["status", "params", "config", "discord", "reference"],
   code: `import os
 from datetime import datetime
@@ -57,6 +57,10 @@ except OSError:
 L.append(f"CPU profile                    : {prof}{act}  (/setprofile restricted|unlimited)")
 L.append(f"Thermal alert threshold        : 70.0 C  (5-min cooldown on repeat)")
 L.append(f"/testall guard                 : {'IN PROGRESS -- commands paused' if exists(f'{SHM}/.testall_running') else 'idle'}")
+
+# LED sleep scheduler (root systemd service pi-leds writes LED state)
+led_mode = read_file(f"{SHM}/led_override", "auto")
+L.append(f"LED mode                       : {led_mode}  (/leds on|off|auto)")
 
 # Discord channel routing (which side-channels are wired up)
 from dotenv import load_dotenv
