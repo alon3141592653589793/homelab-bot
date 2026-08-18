@@ -2,7 +2,7 @@ const manager = {
   id: "led-manager",
   filename: "led_manager.py",
   path: "~/secure-pi-bot/scripts/led_manager.py",
-  description: "Persistent LED scheduler (systemd root service). Keeps the Pi PWR+ACT LEDs OFF 22:00-10:00, but turns them ON while an SSH session is active and for 1h after the last SSH disconnect. Honors the override file written by /leds on|off|auto. Polls every 10s; LED sysfs is root-only so it must run as root (systemd unit in the header comment). Override 'off' forces dark even if you SSH in (true sleep mode).",
+  description: "Persistent LED scheduler (systemd root service). Priority order: /leds on|off commands (until reboot) FIRST, then SSH activity, then the day/night schedule. Auto schedule = LEDs ON 10:00-22:00, OFF 22:00-10:00 -- but ON while an SSH session is active and for 1h after the last disconnect. /leds off forces dark even while SSH'd in (sleep mode); /leds on forces on even at night. Polls every 10s; runs as root (systemd unit in header comment).",
   tags: ["leds", "sleep", "ssh", "systemd", "daemon"],
   code: `#!/usr/bin/env python3
 # LED sleep scheduler + SSH grace daemon (run as root via systemd service).
@@ -97,15 +97,15 @@ while True:
     except ValueError:
         grace_until = 0.0
 
+    # Priority: command (override) -> SSH -> day/night schedule.
     if override == "off":
-        on = False
+        on = False        # command: force dark (sleep) -- beats SSH
     elif override == "on":
-        on = True
-    else:  # auto
-        if ssh or now < grace_until:
-            on = True
-        else:
-            on = not in_sleep_window()
+        on = True         # command: force on -- beats schedule
+    elif ssh or now < grace_until:
+        on = True         # SSH active or 1h post-disconnect grace
+    else:
+        on = not in_sleep_window()  # day (10:00-22:00) -> on; night -> off
 
     if on != last_state:
         write_leds(on)
