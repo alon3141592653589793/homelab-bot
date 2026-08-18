@@ -98,6 +98,7 @@ const logTail = {
   description: "Tail any log from Discord for the /logs command. Searches /dev/shm/pi-bot and ~/secure-pi-bot/logs for a name prefix; '/logs' alone lists available files. Usage: /logs <name> [lines] (default 40, max 200). Reach for it when SSH is dead and you need to read a log.",
   tags: ["logs", "tail", "discord"],
   code: `import os
+import re
 import sys
 import glob
 
@@ -114,6 +115,11 @@ if len(sys.argv) < 2 or not sys.argv[1]:
     sys.exit(0)
 
 name = sys.argv[1]
+# Sanitize: only a plain filename, no path separators or ".." -- stops
+# /logs ../home/alon/.secrets/gemini_key from dumping secrets into Discord.
+if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+    print(f"Invalid log name '{name}'. Use a plain filename (letters, digits, _ . -) -- no paths.")
+    sys.exit(0)
 try:
     n = int(sys.argv[2])
 except (ValueError, IndexError):

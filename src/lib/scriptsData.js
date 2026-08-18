@@ -14,6 +14,7 @@ import systemFixesEntry from "./scripts/systemFixesEntry";
 import lynisSnapshotEntry from "./scripts/lynisSnapshotEntry";
 import ledEntries from "./scripts/ledEntries";
 import diagEntries from "./scripts/diagEntries";
+import constantsEntry from "./scripts/constantsEntry";
 
 const scripts = [
   {
@@ -33,6 +34,9 @@ from discord.ext import tasks
 from modules.reactive import handle_reactive_command
 from modules.adguard import handle_adguard_command
 from modules.vpn import handle_vpn_command
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
+import constants
 
 load_dotenv()
 
@@ -68,7 +72,7 @@ intents.reactions = True
 client = discord.Client(intents=intents)
 
 IS_TEST_MODE = "--alert-test" in sys.argv
-ALERT_THRESHOLD = 70.0
+ALERT_THRESHOLD = constants.ALERT_THRESHOLD
 
 if IS_TEST_MODE:
     try:
@@ -892,7 +896,7 @@ except ImportError as e:
 BOT_DIR = "/home/alon/secure-pi-bot"
 SHM = "/dev/shm/pi-bot"
 STATE_FILE = f"{SHM}/.weekly_report_state.json"
-DRIVE_STATE = f"{SHM}/.weekly_drive_state.json"
+SHEET_STATE = f"{SHM}/.weekly_sheet_state.json"
 os.makedirs(SHM, exist_ok=True)
 TEST_MODE = bool(os.getenv("PI_TEST_MODE"))
 FORCE = "--force" in sys.argv  # manual /weeklyreport bypasses day/idempotency guards
@@ -1131,8 +1135,8 @@ if not sheet_ok:
 # --- Sheet-fail tracking: warn Discord if the sync fails for > 1 day ---
 ds = {}
 try:
-    if os.path.exists(DRIVE_STATE):
-        with open(DRIVE_STATE) as f:
+    if os.path.exists(SHEET_STATE):
+        with open(SHEET_STATE) as f:
             ds = json.load(f)
 except (OSError, ValueError):
     pass
@@ -1146,7 +1150,7 @@ else:
     if age > 86400:
         post(f"**Weekly report Sheet sync warning** [{now.strftime('%H:%M')}] -- failing for >1 day ({int(age//3600)}h). Last error: {ds.get('err','')}")
 try:
-    with open(DRIVE_STATE, "w") as f:
+    with open(SHEET_STATE, "w") as f:
         json.dump(ds, f)
 except OSError:
     pass
@@ -1173,6 +1177,7 @@ print("Weekly report sent.")
   wireguardSetupEntry,
   bootDiagEntry,
   paramsEntry,
+  constantsEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",

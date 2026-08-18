@@ -6,6 +6,7 @@ const entry = {
   tags: ["status", "params", "config", "discord", "reference"],
   code: `import os
 from datetime import datetime
+import constants
 
 try:
     import psutil
@@ -55,7 +56,7 @@ try:
 except OSError:
     pass
 L.append(f"CPU profile                    : {prof}{act}  (/setprofile restricted|unlimited)")
-L.append(f"Thermal alert threshold        : 70.0 C  (5-min cooldown on repeat)")
+L.append(f"Thermal alert threshold        : {constants.ALERT_THRESHOLD} C  (5-min cooldown on repeat)")
 L.append(f"/testall guard                 : {'IN PROGRESS -- commands paused' if exists(f'{SHM}/.testall_running') else 'idle'}")
 
 # LED sleep scheduler (root systemd service pi-leds writes LED state)
