@@ -159,6 +159,33 @@ chmod 600 /home/alon/.secrets/gsheets_log_id.txt
 #  also run: pip3 install --user google-auth)
 
 # ============================================================
+# GOFILE MIRROR -- anti-censorship model backup (cloud-to-cloud via Pi)
+# ============================================================
+# gofile_mirror.py copies a HuggingFace model file to Gofile WITHOUT storing
+# the model on the Pi (staging is /dev/shm tmpfs; only a tiny manifest is kept).
+# It verifies the source by HF's published LFS sha256, then cross-checks the
+# Gofile upload by comparing Gofile's returned md5 to the staged file's md5.
+#
+# gofile_keepalive.py streams each mirrored file from Gofile to /dev/null so
+# (1) the download counts as traffic on your free account -> resets the
+# inactivity-deletion timer, and (2) it re-hashes + re-verifies integrity.
+#
+# Get your Gofile API token (guest or email account) from:
+#   https://gofile.io/myprofile
+echo 'YOUR_GOFILE_TOKEN' > /home/alon/.secrets/gofile_token
+chmod 600 /home/alon/.secrets/gofile_token
+#   A guest token ties uploads to that guest account (keep it -- it's the only
+#   way back in). A free email account is more durable. Premium makes program
+#   download + file persistence reliable (Gofile then keeps files without
+#   traffic, so the keep-alive cron becomes optional).
+#
+# Tiny end-to-end test (real ~17MB BERT-tiny, verified by HF sha256):
+#   python3 /home/alon/secure-pi-bot/scripts/gofile_mirror.py
+#   python3 /home/alon/secure-pi-bot/scripts/gofile_keepalive.py
+# If the keepalive can't resolve a direct download on free tier, either go
+# Premium or we add a headless-browser resolver next.
+
+# ============================================================
 # CRONTAB
 # ============================================================
 crontab - << 'EOF'

@@ -36,6 +36,12 @@ const entry = {
 
 # Weekly AI system audit (all info minified; Lynis in a separate pass)
 0 5 * * 0 python3 /home/alon/secure-pi-bot/scripts/ai_debug.py --audit
+
+# Gofile mirror keep-alive + integrity re-check -- UNCOMMENT only after you
+# confirm gofile_keepalive.py can resolve a real download on your account.
+# Free-tier download scraping is best-effort; Premium makes it reliable AND
+# keeps files without traffic (so this cron is optional on premium).
+# 17 */6 * * * python3 /home/alon/secure-pi-bot/scripts/gofile_keepalive.py >> /dev/shm/pi-bot/gofile_keepalive.log 2>&1
 `,
 };
 

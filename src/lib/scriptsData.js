@@ -15,6 +15,8 @@ import lynisSnapshotEntry from "./scripts/lynisSnapshotEntry";
 import ledEntries from "./scripts/ledEntries";
 import diagEntries from "./scripts/diagEntries";
 import constantsEntry from "./scripts/constantsEntry";
+import gofileMirrorEntry from "./scripts/gofileMirrorEntry";
+import gofileKeepaliveEntry from "./scripts/gofileKeepaliveEntry";
 
 const scripts = [
   {
@@ -1178,6 +1180,8 @@ print("Weekly report sent.")
   bootDiagEntry,
   paramsEntry,
   constantsEntry,
+  gofileMirrorEntry,
+  gofileKeepaliveEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
