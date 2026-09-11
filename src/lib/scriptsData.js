@@ -17,6 +17,8 @@ import diagEntries from "./scripts/diagEntries";
 import constantsEntry from "./scripts/constantsEntry";
 import gofileMirrorEntry from "./scripts/gofileMirrorEntry";
 import gofileKeepaliveEntry from "./scripts/gofileKeepaliveEntry";
+import piDeployEntry from "./scripts/piDeployEntry";
+import piDeployRootEntry from "./scripts/piDeployRootEntry";
 
 const scripts = [
   {
@@ -337,6 +339,12 @@ async def handle_reactive_command(client, message):
     elif content in ("/parameters", "/params", "/paramters"):
         await run_script(message, "params.py", "Listing current parameters...", timeout=15)
 
+    elif content in ("/sync", "/sync no-reboot", "/sync config"):
+        if content == "/sync":
+            await run_script(message, "pi_deploy.py", "Pulling from GitHub + applying all scripts/configs, then rebooting...", timeout=300)
+        else:
+            await run_script(message, "pi_deploy.py", "Pulling + applying configs (no reboot)...", args=["--no-reboot"], timeout=300)
+
     elif content == "/testall":
         await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
 
@@ -397,6 +405,8 @@ async def handle_reactive_command(client, message):
             "\\n== Advanced ==\\n"
             "/aidebug <question>   - Conversational AI diagnostic (optional: model prefix)\\n"
             "/testall              - Run full test suite (posts to #testing)\\n"
+            "/sync                 - Pull all scripts+configs from GitHub, apply, reboot\\n"
+            "/sync no-reboot       - Same, but skip the reboot\\n"
             "\\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\\n"
             "/help                 - This message"
         )
@@ -1182,6 +1192,8 @@ print("Weekly report sent.")
   constantsEntry,
   gofileMirrorEntry,
   gofileKeepaliveEntry,
+  piDeployEntry,
+  piDeployRootEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",

@@ -89,6 +89,43 @@ sudo visudo -c   # syntax check -- a bad sudoers line can lock you out
 #   systemctl daemon-reload && systemctl enable --now pi-leds
 
 # ============================================================
+# SELF-DEPLOY (GitHub -> Pi): pull, overwrite every script + config, reboot
+# ============================================================
+# pi_deploy.py + pi_deploy_root.sh let the Pi overwrite ALL of its own scripts
+# and config files from a GitHub repo, then reboot -- triggered by Discord
+# /sync (or /sync no-reboot). Repo layout == filesystem layout:
+#   home/alon/secure-pi-bot/... -> /home/alon/secure-pi-bot/...  (alon)
+#   usr/local/bin/...           -> /usr/local/bin/...           (root)
+#   etc/systemd/system/...      -> /etc/systemd/system/...        (root)
+#   etc/sudoers.d/...            -> /etc/sudoers.d/...           (root)
+#   etc/polkit-1/rules.d/...    -> /etc/polkit-1/rules.d/...     (root)
+#   etc/udev/rules.d/...        -> /etc/udev/rules.d/...         (root)
+#   crontab.txt                 -> alon's crontab                (root)
+#
+# One-time bootstrap (the deploy can't install its own root helper without root):
+sudo cp /home/alon/secure-pi-bot/scripts/pi_deploy_root.sh /usr/local/bin/pi_deploy_root
+sudo chmod 755 /usr/local/bin/pi_deploy_root
+echo "alon ALL=(root) NOPASSWD: /usr/local/bin/pi_deploy_root" | sudo tee /etc/sudoers.d/pi-deploy
+sudo chmod 440 /etc/sudoers.d/pi-deploy
+sudo visudo -c
+#
+# Point it at your repo (HTTPS; for private repos use a deploy key / token URL):
+echo 'https://github.com/YOU/pi-deploy.git' > /home/alon/secure-pi-bot/.deploy_repo
+echo '/home/alon/pi-deploy'                > /home/alon/secure-pi-bot/.deploy_dir
+chmod 600 /home/alon/secure-pi-bot/.deploy_repo /home/alon/secure-pi-bot/.deploy_dir
+#
+# Then from Discord:
+#   /sync            (pulls, applies everything, reboots)
+#   /sync no-reboot  (pulls, applies, no reboot)
+#
+# NOTES:
+#   - git reset --hard is used -> local edits on the Pi are OVERWRITTEN. The
+#     repo is the source of truth.
+#   - Inbound webhooks aren't possible behind NAT. If you want push-triggered
+#     deploys, call /sync from a GitHub Action, or add a cron line
+#     'pi_deploy.py --no-reboot' for hands-free config-only sync.
+
+# ============================================================
 # DIRECTORIES + LOGGING ENABLE
 # ============================================================
 mkdir -p /home/alon/secure-pi-bot/logs/weekly_reports
