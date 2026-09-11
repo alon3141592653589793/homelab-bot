@@ -2,7 +2,7 @@ const entry = {
   id: "pi-deploy-root",
   filename: "pi_deploy_root.sh",
   path: "/usr/local/bin/pi_deploy_root",
-  description: "Root half of the self-deploy (run via the sudoers NOPASSWD rule from pi_deploy.py). Installs root-owned files from the deploy tree (usr/local/bin, etc/systemd/system, etc/sudoers.d, etc/polkit-1/rules.d, etc/udev/rules.d), applies alon's crontab, validates sudoers fragments BEFORE copying (so a bad file can't lock you out), reloads systemd, enables pi-leds, flushes logs, then reboots (unless --no-reboot). The reboot is delayed 3s via nohup so pi_deploy.py can flush its 'Rebooting...' line to Discord before the Pi dies. Supports --dry-run (validates sudoers, reports the plan, writes nothing) for safe pre-flight testing.",
+  description: "Root half of the self-deploy (run via the sudoers NOPASSWD rule from pi_deploy.py). Installs root-owned files from the deploy tree (usr/local/bin, etc/systemd/system, etc/sudoers.d, etc/polkit-1/rules.d, etc/udev/rules.d), applies alon's crontab, validates sudoers fragments BEFORE copying (so a bad file can't lock you out), reloads systemd, enables pi-leds, flushes logs, then reboots (unless --no-reboot). The reboot is delayed 3s via nohup so pi_deploy.py can flush its 'Rebooting...' line to Discord before the Pi dies.",
   tags: ["deploy", "root", "sudoers", "reboot", "bash"],
   code: `#!/bin/bash
 # Root half of the self-deploy. Run via the sudoers rule (NOPASSWD) from
@@ -10,29 +10,15 @@ const entry = {
 # crontab, reloads systemd, enables services, then reboots (unless --no-reboot).
 set -e
 D="$1"
-shift
 [ -d "$D" ] || { echo "FAILURE: deploy dir '$D' missing"; exit 1; }
 NO_REBOOT=0
-DRY=0
-for a in "$@"; do
-  case "$a" in
-    --no-reboot) NO_REBOOT=1 ;;
-    --dry-run) DRY=1 ;;
-  esac
-done
-[ "$DRY" -eq 1 ] && echo "[DRY-RUN] no files will be written, no reboot."
+[ "$2" = "--no-reboot" ] && NO_REBOOT=1
 
 # Validate any sudoers fragment BEFORE copying (a bad file can lock you out).
 for f in "$D"/etc/sudoers.d/*; do
   [ -f "$f" ] || continue
   visudo -cf "$f" >/dev/null || { echo "FAILURE: sudoers syntax error in $f"; exit 1; }
 done
-
-if [ "$DRY" -eq 1 ]; then
-  echo "Dry-run plan: install /usr/local/bin/*, /etc/{systemd/system,sudoers.d,polkit-1/rules.d,udev/rules.d}/*, crontab; daemon-reload; enable pi-leds; reboot unless --no-reboot."
-  echo "[DRY-RUN] OK -- sudoers fragments validated, nothing written."
-  exit 0
-fi
 
 # usr/local/bin -> /usr/local/bin (chmod 755 on the known executables)
 if [ -d "$D/usr/local/bin" ]; then
