@@ -343,9 +343,11 @@ async def handle_reactive_command(client, message):
     elif content in ("/parameters", "/params", "/paramters"):
         await run_script(message, "params.py", "Listing current parameters...", timeout=15)
 
-    elif content in ("/sync", "/sync no-reboot", "/sync config"):
+    elif content in ("/sync", "/sync no-reboot", "/sync config", "/sync dry-run"):
         if content == "/sync":
             await run_script(message, "pi_deploy.py", "Pulling from GitHub + applying all scripts/configs, then rebooting...", timeout=300)
+        elif content == "/sync dry-run":
+            await run_script(message, "pi_deploy.py", "Dry-run: pulling + listing what would change (no write, no reboot)...", args=["--dry-run"], timeout=120)
         else:
             await run_script(message, "pi_deploy.py", "Pulling + applying configs (no reboot)...", args=["--no-reboot"], timeout=300)
 
@@ -419,6 +421,7 @@ async def handle_reactive_command(client, message):
             "/testall              - Run full test suite (posts to #testing)\\n"
             "/sync                 - Pull all scripts+configs from GitHub, apply, reboot\\n"
             "/sync no-reboot       - Same, but skip the reboot\\n"
+            "/sync dry-run         - Pull + list what would change (no write, no reboot)\\n"
             "\\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\\n"
             "/help                 - This message"
         )
