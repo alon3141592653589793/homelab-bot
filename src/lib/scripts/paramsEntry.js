@@ -38,6 +38,7 @@ L.append(f"Auto updates + weekly reboot   : {ena(f'{BOT}/.updates_disabled')}  (
 L.append(f"System logger (10-min temp/RAM) : {on(f'{BOT}/.logging_enabled')}  (/logging start|stop)")
 L.append(f"Weekly Discord report (Mon 09:00): {ena(f'{BOT}/.weekly_report_disabled')}  (/weeklyreport start|stop)")
 L.append(f"Nightly maintenance (03:00)     : {ena(f'{BOT}/.maintenance_disabled')}")
+L.append(f"Autostart skip (next boot)      : {'PAUSED -- lab will not start' if exists(f'{BOT}/.skip_autostart') else 'normal'}  (/bootpause / /bootresume)")
 
 # CPU profile: override marker vs scheduler + actual sysfs
 ov = read_file(f"{BOT}/.profile_override").lower()

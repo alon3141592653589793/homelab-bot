@@ -19,6 +19,7 @@ import gofileMirrorEntry from "./scripts/gofileMirrorEntry";
 import gofileKeepaliveEntry from "./scripts/gofileKeepaliveEntry";
 import piDeployEntry from "./scripts/piDeployEntry";
 import piDeployRootEntry from "./scripts/piDeployRootEntry";
+import bootPauseEntry from "./scripts/bootPauseEntry";
 
 const scripts = [
   {
@@ -197,6 +198,9 @@ async def passive_thermal_monitor():
 async def on_ready():
     print(f"Bot online as {client.user}")
     os.makedirs("/dev/shm/pi-bot", exist_ok=True)
+    if os.path.exists("/home/alon/secure-pi-bot/.skip_autostart"):
+        print("AUTOSTART PAUSED (.skip_autostart) -- minimal mode, no monitoring tasks. /bootresume to restore.")
+        return
     if not passive_thermal_monitor.is_running():
         passive_thermal_monitor.start()
     if not sync_bot_presence.is_running():
@@ -345,6 +349,12 @@ async def handle_reactive_command(client, message):
         else:
             await run_script(message, "pi_deploy.py", "Pulling + applying configs (no reboot)...", args=["--no-reboot"], timeout=300)
 
+    elif content == "/bootpause":
+        await run_script(message, "boot_pause.py", "Pausing lab autostart for next boot...")
+
+    elif content == "/bootresume":
+        await run_script(message, "boot_resume.py", "Resuming lab autostart...")
+
     elif content == "/testall":
         await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
 
@@ -402,6 +412,8 @@ async def handle_reactive_command(client, message):
             "/setprofile restricted|unlimited  - Switch CPU profile\\n"
             "/logging start|stop   - Toggle system logger\\n"
             "/updates start|stop   - Pause or resume automatic apt upgrade + reboot\\n"
+            "/bootpause            - Skip ALL lab autostart on next boot (cron off, bot minimal)\\n"
+            "/bootresume           - Restore crontab + clear skip flag (then /restart)\\n"
             "\\n== Advanced ==\\n"
             "/aidebug <question>   - Conversational AI diagnostic (optional: model prefix)\\n"
             "/testall              - Run full test suite (posts to #testing)\\n"
@@ -1194,6 +1206,7 @@ print("Weekly report sent.")
   gofileKeepaliveEntry,
   piDeployEntry,
   piDeployRootEntry,
+  ...bootPauseEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
