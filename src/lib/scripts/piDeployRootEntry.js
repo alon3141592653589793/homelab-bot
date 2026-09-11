@@ -14,6 +14,17 @@ D="$1"
 NO_REBOOT=0
 [ "$2" = "--no-reboot" ] && NO_REBOOT=1
 
+# Snapshot the dangerous root configs BEFORE overwriting -> recoverable if it breaks.
+BK="/home/alon/secure-pi-bot/.deploy_backups/$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BK"
+tar -cf "$BK/sudoers.tar" /etc/sudoers.d 2>/dev/null || true
+crontab -u alon -l > "$BK/crontab.alon" 2>/dev/null || true
+[ -f /etc/polkit-1/rules.d/49-pi-bot.rules ] && cp /etc/polkit-1/rules.d/49-pi-bot.rules "$BK/" 2>/dev/null || true
+[ -f /etc/udev/rules.d/99-cpufreq.rules ] && cp /etc/udev/rules.d/99-cpufreq.rules "$BK/" 2>/dev/null || true
+[ -f /etc/systemd/system/pi-leds.service ] && cp /etc/systemd/system/pi-leds.service "$BK/" 2>/dev/null || true
+chown -R alon:alon "$BK" 2>/dev/null || true
+echo "Backup -> $BK"
+
 # Validate any sudoers fragment BEFORE copying (a bad file can lock you out).
 for f in "$D"/etc/sudoers.d/*; do
   [ -f "$f" ] || continue

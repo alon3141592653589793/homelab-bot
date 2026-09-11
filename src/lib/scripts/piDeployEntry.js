@@ -29,7 +29,12 @@ copy pi_deploy_root.sh to /usr/local/bin and add the sudoers line.
 
 Usage:
   python3 pi_deploy.py                # pull, apply, REBOOT
-  python3 pi_deploy.py --no-reboot    # pull, apply, no reboot
+  python3 pi_deploy.py --no-reboot    # pull, apply, no reboot (verify via SSH before rebooting)
+  python3 pi_deploy.py --dry-run      # pull + list what would change, NO write, no reboot
+
+Safe-test order: --dry-run -> --no-reboot -> verify SSH still works -> full run.
+The root helper auto-snapshots /etc/sudoers.d, alon's crontab, pi-leds service,
+polkit + udev rules to ~/.deploy_backups/<ts> BEFORE overwriting.
 """
 import os
 import sys
@@ -56,6 +61,7 @@ def run(cmd):
 
 def main():
     no_reboot = "--no-reboot" in sys.argv
+    dry_run = "--dry-run" in sys.argv
     repo = read_cfg(DEPLOY_REPO_FILE)
     deploy_dir = read_cfg(DEPLOY_DIR_FILE, DEFAULT_DEPLOY_DIR)
     if not repo:
@@ -70,6 +76,19 @@ def main():
         run(["git", "-C", deploy_dir, "fetch", "--force", "origin"])
         run(["git", "-C", deploy_dir, "reset", "--hard", "origin/HEAD"])
     print("Repo up to date at " + deploy_dir)
+
+    if dry_run:
+        print("[DRY-RUN] would apply these repo paths (no write, no reboot):")
+        for top in ("home", "usr/local/bin", "etc/systemd/system", "etc/sudoers.d", "etc/polkit-1/rules.d", "etc/udev/rules.d"):
+            base = os.path.join(deploy_dir, top)
+            if os.path.isdir(base):
+                for root, _, files in os.walk(base):
+                    for fn in files:
+                        print("  " + os.path.relpath(os.path.join(root, fn), deploy_dir))
+        if os.path.isfile(os.path.join(deploy_dir, "crontab.txt")):
+            print("  crontab.txt -> alon crontab")
+        print("[DRY-RUN] nothing written. Next: --no-reboot (apply, keep session) then a full run to reboot.")
+        return
 
     # 2. User-owned files (home/ tree) -- alon can write these directly.
     #    No --delete: only overwrite/add, never wipe unrelated Pi files.
