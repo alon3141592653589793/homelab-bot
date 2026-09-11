@@ -39,11 +39,27 @@ polkit + udev rules to ~/.deploy_backups/<ts> BEFORE overwriting.
 import os
 import sys
 import subprocess
+import json
+from datetime import datetime
 
 DEPLOY_REPO_FILE = "/home/alon/secure-pi-bot/.deploy_repo"
 DEPLOY_DIR_FILE = "/home/alon/secure-pi-bot/.deploy_dir"
 DEFAULT_DEPLOY_DIR = os.path.expanduser("~/pi-deploy")
 ROOT_HELPER = ["sudo", "-n", "/usr/local/bin/pi_deploy_root"]
+DEPLOY_STATE = "/home/alon/secure-pi-bot/.deploy_state.json"
+
+
+def write_state(update):
+    try:
+        st = {}
+        if os.path.exists(DEPLOY_STATE):
+            with open(DEPLOY_STATE) as f:
+                st = json.load(f)
+        st.update(update)
+        with open(DEPLOY_STATE, "w") as f:
+            json.dump(st, f)
+    except OSError:
+        pass
 
 
 def read_cfg(path, default=None):
@@ -68,6 +84,9 @@ def main():
         print("FAILURE: set the repo URL first:")
         print("  echo 'https://github.com/you/pi-deploy.git' > ~/secure-pi-bot/.deploy_repo")
         sys.exit(1)
+
+    mode = "dry-run" if dry_run else ("apply (no-reboot)" if no_reboot else "apply + reboot")
+    write_state({"last_run": datetime.now().isoformat(timespec="seconds"), "last_run_mode": mode})
 
     # 1. Clone or fast-forward pull.
     if not os.path.isdir(os.path.join(deploy_dir, ".git")):
@@ -106,7 +125,9 @@ def main():
     if r.returncode != 0:
         print("ROOT HELPER FAILED:")
         print((r.stderr or "").strip())
+        write_state({"last_apply": datetime.now().isoformat(timespec="seconds"), "last_apply_ok": False})
         sys.exit(1)
+    write_state({"last_apply": datetime.now().isoformat(timespec="seconds"), "last_apply_ok": True})
 
 
 if __name__ == "__main__":

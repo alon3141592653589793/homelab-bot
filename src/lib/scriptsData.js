@@ -20,6 +20,7 @@ import gofileKeepaliveEntry from "./scripts/gofileKeepaliveEntry";
 import piDeployEntry from "./scripts/piDeployEntry";
 import piDeployRootEntry from "./scripts/piDeployRootEntry";
 import bootPauseEntry from "./scripts/bootPauseEntry";
+import deployInfoEntry from "./scripts/deployInfoEntry";
 
 const scripts = [
   {
@@ -351,6 +352,9 @@ async def handle_reactive_command(client, message):
         else:
             await run_script(message, "pi_deploy.py", "Pulling + applying configs (no reboot)...", args=["--no-reboot"], timeout=300)
 
+    elif content in ("/syncinfo", "/deployinfo"):
+        await run_script(message, "deploy_info.py", "Checking deploy status...", timeout=30)
+
     elif content == "/bootpause":
         await run_script(message, "boot_pause.py", "Pausing lab autostart for next boot...")
 
@@ -422,6 +426,7 @@ async def handle_reactive_command(client, message):
             "/sync                 - Pull all scripts+configs from GitHub, apply, reboot\\n"
             "/sync no-reboot       - Same, but skip the reboot\\n"
             "/sync dry-run         - Pull + list what would change (no write, no reboot)\\n"
+            "/syncinfo             - When GitHub repo was last updated + when /sync last ran\\n"
             "\\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\\n"
             "/help                 - This message"
         )
@@ -1210,6 +1215,7 @@ print("Weekly report sent.")
   piDeployEntry,
   piDeployRootEntry,
   ...bootPauseEntry,
+  deployInfoEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
