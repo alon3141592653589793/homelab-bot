@@ -2,81 +2,82 @@ const entry = {
   id: "pi-deploy-root",
   filename: "pi_deploy_root.sh",
   path: "/usr/local/bin/pi_deploy_root",
-  description: "Root half of the self-deploy (run via the sudoers NOPASSWD rule from pi_deploy.py). Installs root-owned files from the deploy tree (usr/local/bin, etc/systemd/system, etc/sudoers.d, etc/polkit-1/rules.d, etc/udev/rules.d), applies alon's crontab, validates sudoers fragments BEFORE copying (so a bad file can't lock you out), reloads systemd, enables pi-leds, flushes logs, then reboots (unless --no-reboot). The reboot is delayed 3s via nohup so pi_deploy.py can flush its 'Rebooting...' line to Discord before the Pi dies.",
-  tags: ["deploy", "root", "sudoers", "reboot", "bash"],
+  description: "Root installer for /sync. Invoked (NOPASSWD via /etc/sudoers.d/pi-deploy) by pi_deploy.py with a repo root + a list file. Each list line is '<src>\\t<dst>' where dst is an absolute root-owned path (or @crontab to apply as alon's crontab). Installs ONLY the listed files: copy + chmod + chown root, validate sudoers fragments BEFORE copying (a bad file can't lock you out), reload systemd/udev, apply crontab. Backs up existing targets to ~/.deploy_backups/<ts>. Does NOT reboot (pi_deploy.py reboots after).",
+  tags: ["deploy", "root", "sudoers", "manifest", "bash"],
   code: `#!/bin/bash
-# Root half of the self-deploy. Run via the sudoers rule (NOPASSWD) from
-# pi_deploy.py. Installs root-owned files from the deploy tree, applies
-# crontab, reloads systemd, enables services, then reboots (unless --no-reboot).
+# Root installer for /sync. Run via the sudoers rule (NOPASSWD) from pi_deploy.py.
+# Args: <repo-root> <list-file>
+# list-file lines: "<src>\\t<dst>"  (dst = absolute path, or @crontab)
+# Installs ONLY the listed files: copy + chmod + chown, validate sudoers
+# fragments BEFORE copying (a bad file can't lock you out), reload
+# systemd/udev, apply crontab. Backs up existing targets. Does NOT reboot
+# (pi_deploy.py reboots after).
 set -e
-D="$1"
-[ -d "$D" ] || { echo "FAILURE: deploy dir '$D' missing"; exit 1; }
-NO_REBOOT=0
-[ "$2" = "--no-reboot" ] && NO_REBOOT=1
+ROOT="$1"
+LIST="$2"
+[ -d "$ROOT" ] && [ -f "$LIST" ] || { echo "FAILURE: usage: pi_deploy_root <repo-root> <list-file>"; exit 1; }
 
-# Snapshot the dangerous root configs BEFORE overwriting -> recoverable if it breaks.
 BK="/home/alon/secure-pi-bot/.deploy_backups/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$BK"
-tar -cf "$BK/sudoers.tar" /etc/sudoers.d 2>/dev/null || true
-crontab -u alon -l > "$BK/crontab.alon" 2>/dev/null || true
-[ -f /etc/polkit-1/rules.d/49-pi-bot.rules ] && cp /etc/polkit-1/rules.d/49-pi-bot.rules "$BK/" 2>/dev/null || true
-[ -f /etc/udev/rules.d/99-cpufreq.rules ] && cp /etc/udev/rules.d/99-cpufreq.rules "$BK/" 2>/dev/null || true
-[ -f /etc/systemd/system/pi-leds.service ] && cp /etc/systemd/system/pi-leds.service "$BK/" 2>/dev/null || true
-chown -R alon:alon "$BK" 2>/dev/null || true
-echo "Backup -> $BK"
 
-# Validate any sudoers fragment BEFORE copying (a bad file can lock you out).
-for f in "$D"/etc/sudoers.d/*; do
-  [ -f "$f" ] || continue
-  visudo -cf "$f" >/dev/null || { echo "FAILURE: sudoers syntax error in $f"; exit 1; }
-done
+NEED_SYSTEMD=0
+NEED_UDEV=0
+NEED_SUDOERS=0
+INSTALLED=0
 
-# usr/local/bin -> /usr/local/bin (chmod 755 on the known executables)
-if [ -d "$D/usr/local/bin" ]; then
-  cp -r "$D/usr/local/bin/." /usr/local/bin/
-  for x in led_ctl pi-maintenance.sh pi-audit.sh pi_deploy_root; do
-    [ -f "/usr/local/bin/$x" ] && chmod 755 "/usr/local/bin/$x"
-  done
-  echo "Installed /usr/local/bin/*"
-fi
-
-# etc/* selected subdirs -> /etc/*
-for sub in systemd/system sudoers.d polkit-1/rules.d udev/rules.d; do
-  if [ -d "$D/etc/$sub" ]; then
-    mkdir -p "/etc/$sub"
-    cp -r "$D/etc/$sub/." "/etc/$sub/"
-    echo "Installed /etc/$sub/*"
+while IFS=$'\\t' read -r src dst || [ -n "$src" ]; do
+  [ -z "$src" ] && continue
+  srcpath="$ROOT/$src"
+  if [ ! -f "$srcpath" ]; then
+    echo "SKIP: source missing: $src"
+    continue
   fi
-done
 
-# sudoers perms + global syntax check
-for f in /etc/sudoers.d/pi-leds /etc/sudoers.d/pi-deploy; do
-  [ -f "$f" ] && chmod 440 "$f"
-done
-visudo -c >/dev/null || { echo "FAILURE: global sudoers syntax error"; exit 1; }
+  # @crontab -> apply as alon's crontab
+  if [ "$dst" = "@crontab" ]; then
+    cp "$srcpath" "$BK/crontab.bak"
+    sudo -u alon crontab "$srcpath"
+    echo "+ $src -> @crontab (applied)"
+    INSTALLED=$((INSTALLED + 1))
+    continue
+  fi
 
-# udev
-[ -d "$D/etc/udev/rules.d" ] && { udevadm control --reload-rules; udevadm trigger 2>/dev/null || true; }
+  # validate sudoers fragment BEFORE copying (a bad file can lock you out)
+  case "$dst" in
+    /etc/sudoers.d/*)
+      visudo -cf "$srcpath" >/dev/null || { echo "FAILURE: sudoers syntax error in $src"; exit 1; }
+      ;;
+  esac
 
-# crontab (alon's)
-if [ -f "$D/crontab.txt" ]; then
-  sudo -u alon crontab "$D/crontab.txt"
-  echo "Installed crontab"
+  # backup existing target
+  [ -f "$dst" ] && cp "$dst" "$BK/$(echo "$dst" | tr '/' '_')" 2>/dev/null || true
+
+  mkdir -p "$(dirname "$dst")"
+  cp "$srcpath" "$dst"
+  chown root:root "$dst"
+  case "$dst" in
+    /usr/local/bin/*)                chmod 755 "$dst" ;;
+    /etc/sudoers.d/*)                chmod 440 "$dst"; NEED_SUDOERS=1 ;;
+    /etc/systemd/system/*.service)   NEED_SYSTEMD=1 ;;
+    /etc/udev/rules.d/*)             NEED_UDEV=1 ;;
+  esac
+  h=$(sha256sum "$dst" | cut -c1-12)
+  echo "+ $src -> $dst  hash=$h"
+  INSTALLED=$((INSTALLED + 1))
+done < "$LIST"
+
+# global sudoers syntax check only if a sudoers file was installed
+if [ "$NEED_SUDOERS" = "1" ]; then
+  visudo -c >/dev/null || { echo "FAILURE: global sudoers syntax error"; exit 1; }
 fi
 
-# systemd
-systemctl daemon-reload
-systemctl enable --now pi-leds 2>/dev/null || true
-
-# Flush logs before reboot (best-effort)
-sudo -u alon python3 /home/alon/secure-pi-bot/scripts/compress_logs.py >/dev/null 2>&1 || true
-
-if [ "$NO_REBOOT" -eq 1 ]; then
-  echo "Deploy applied. Skipping reboot (--no-reboot)."
-else
-  echo "Deploy applied. Rebooting in 3s..."
-  nohup sh -c 'sleep 3; systemctl reboot' >/dev/null 2>&1 &
+[ "$NEED_SYSTEMD" = "1" ] && systemctl daemon-reload
+if [ "$NEED_UDEV" = "1" ]; then
+  udevadm control --reload-rules
+  udevadm trigger 2>/dev/null || true
 fi
+
+echo "Installed $INSTALLED root file(s). Backup: $BK"
 `,
 };
 

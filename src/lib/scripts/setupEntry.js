@@ -126,8 +126,14 @@ chmod 600 ~/secure-pi-bot/.deploy_repo
 # NOTES:
 #   - git reset --hard is used -> local edits to TRACKED files on the Pi are
 #     OVERWRITTEN. Keep changes in the repo, not on the Pi.
-#   - Root-owned files (sudoers/polkit/udev/systemd/crontab) are NOT synced.
-#     Apply those by hand with pi_deploy_root.sh when you change them.
+#   - Root-owned files (/usr/local/bin/*, /etc/..., crontab) ARE synced if
+#     listed in ~/secure-pi-bot/deploy_manifest.txt. Only files that CHANGED
+#     in the pull are reinstalled (idempotent + safe). Requires the one-time
+#     root helper bootstrap (already done):
+#       sudo cp ~/secure-pi-bot/scripts/pi_deploy_root.sh /usr/local/bin/pi_deploy_root
+#       sudo chmod 755 /usr/local/bin/pi_deploy_root
+#       echo "alon ALL=(root) NOPASSWD: /usr/local/bin/pi_deploy_root" | sudo tee /etc/sudoers.d/pi-deploy
+#       sudo chmod 440 /etc/sudoers.d/pi-deploy && sudo visudo -c
 #   - Inbound webhooks aren't possible behind NAT. For push-triggered deploys,
 #     call /sync from a GitHub Action, or add a cron line
 #     'pi_deploy.py --no-reboot' for hands-free pulls.

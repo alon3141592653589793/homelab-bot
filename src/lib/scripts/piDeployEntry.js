@@ -2,26 +2,28 @@ const entry = {
   id: "pi-deploy",
   filename: "pi_deploy.py",
   path: "~/secure-pi-bot/scripts/pi_deploy.py",
-  description: "Self-deploy (simple): pull the existing secure-pi-bot repo directly into ~/secure-pi-bot, VERIFY every change by sha256 hash, report old->new hash for each updated file, then reboot so the bot reloads the new code. One repo, one path -- just a git fetch + reset --hard to origin/<branch>. Root-owned files (/etc/..., /usr/local/bin/...) are NOT touched by /sync (change those by hand). .env and other untracked files are never deleted (git reset --hard only touches tracked files; aborts if .env is tracked to protect secrets). Triggered by Discord /sync (or /sync no-reboot / /sync dry-run). Records last-run state for /syncinfo.",
-  tags: ["deploy", "github", "sync", "self-update", "reboot", "verify"],
+  description: "Self-deploy: pull the existing secure-pi-bot repo into ~/secure-pi-bot, VERIFY every change by sha256 hash, report old->new hash for each updated file, THEN install any root-owned files listed in deploy_manifest.txt that changed in the pull (via pi_deploy_root.sh), then reboot. One repo, one path -- git fetch + reset --hard to origin/<branch>. .env and untracked files are never deleted (aborts if .env is tracked). Triggered by Discord /sync (or /sync no-reboot / /sync dry-run). Records state for /syncinfo.",
+  tags: ["deploy", "github", "sync", "self-update", "reboot", "verify", "root"],
   code: `#!/usr/bin/env python3
 """
-Self-deploy (simple): pull the existing secure-pi-bot repo directly into
-~/secure-pi-bot, verify every change by sha256 hash, report old->new hash
-for each updated file, then reboot so the bot reloads the new code.
+Self-deploy: pull the existing secure-pi-bot repo into ~/secure-pi-bot, verify
+every change by sha256 hash, install any root-owned files listed in
+deploy_manifest.txt that changed in the pull (via pi_deploy_root.sh), then
+reboot so the bot reloads the new code.
 
 One repo, one path -- this is just a git pull of your existing project repo.
-Root-owned files (/etc/..., /usr/local/bin/...) are NOT touched by /sync;
-change those by hand when needed. .env and other untracked files are never
-deleted (git reset --hard only touches tracked files).
+Files that need to live OUTSIDE ~/secure-pi-bot (/usr/local/bin/*, /etc/...,
+crontab) are listed in ~/secure-pi-bot/deploy_manifest.txt; only the ones that
+CHANGED in the pull are reinstalled (idempotent + safe). .env and other
+untracked files are never deleted (git reset --hard only touches tracked files).
 
 Config (one line each):
   ~/secure-pi-bot/.deploy_repo    -> git URL of the existing repo
   ~/secure-pi-bot/.deploy_branch  -> branch (optional; default = repo default)
 
 Usage:
-  python3 pi_deploy.py               # pull, verify, REBOOT
-  python3 pi_deploy.py --no-reboot   # pull, verify, no reboot
+  python3 pi_deploy.py               # pull, verify, install root, REBOOT
+  python3 pi_deploy.py --no-reboot   # same, no reboot
   python3 pi_deploy.py --dry-run     # fetch + show what would change, no write
 """
 import os
@@ -35,6 +37,9 @@ DEPLOY_DIR = "/home/alon/secure-pi-bot"
 REPO_FILE = os.path.join(DEPLOY_DIR, ".deploy_repo")
 BRANCH_FILE = os.path.join(DEPLOY_DIR, ".deploy_branch")
 STATE_FILE = os.path.join(DEPLOY_DIR, ".deploy_state.json")
+MANIFEST = os.path.join(DEPLOY_DIR, "deploy_manifest.txt")
+SHM = "/dev/shm/pi-bot"
+ROOT_LIST = os.path.join(SHM, ".deploy_root_list")
 
 
 def write_state(update):
@@ -82,6 +87,21 @@ def fhash(rel):
         return "(missing)"
 
 
+def load_manifest():
+    items = []
+    if not os.path.exists(MANIFEST):
+        return items
+    with open(MANIFEST) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                items.append((parts[0], parts[1]))
+    return items
+
+
 def main():
     no_reboot = "--no-reboot" in sys.argv
     dry_run = "--dry-run" in sys.argv
@@ -118,28 +138,36 @@ def main():
     diff = git(["diff", "--name-only", "HEAD.." + ref], check=False)
     changed = [ln for ln in diff.stdout.splitlines() if ln.strip()]
 
+    # Manifest: root-owned files to install outside ~/secure-pi-bot.
+    manifest = load_manifest()
+    changed_set = set(changed)
+    root_changed = [(s, t) for (s, t) in manifest if s in changed_set]
+
     if dry_run:
         print("[DRY-RUN] new commits since last sync:")
         r = git(["log", "--oneline", "HEAD.." + ref], check=False)
         print(r.stdout.strip() or "(none -- already up to date)")
         if changed:
-            print("[DRY-RUN] files that would change (" + str(len(changed)) + "):")
+            print("[DRY-RUN] user files that would change (" + str(len(changed)) + "):")
             for rel in changed:
                 print("  - " + rel + "  (current hash: " + fhash(rel) + ")")
         else:
-            print("[DRY-RUN] no tracked files would change.")
+            print("[DRY-RUN] no user files would change.")
+        if root_changed:
+            print("[DRY-RUN] root-owned files that would be installed (" + str(len(root_changed)) + "):")
+            for s, t in root_changed:
+                print("  - " + s + " -> " + t)
         print("[DRY-RUN] nothing written.")
         return
 
-    # Snapshot current hashes of the files that will change, THEN apply.
+    # Snapshot current hashes of the user files that will change, THEN apply.
     old_hashes = {rel: fhash(rel) for rel in changed}
-
     git(["reset", "--hard", ref])
     print("Updated " + DEPLOY_DIR + " to " + ref)
 
-    # Verify: report old -> new hash for every file that was supposed to change.
+    # Verify: report old -> new hash for every user file that was supposed to change.
     if changed:
-        print("Hash verification (" + str(len(changed)) + " file(s) diff vs HEAD):")
+        print("Hash verification (" + str(len(changed)) + " user file(s) diff vs HEAD):")
         actually = 0
         for rel in changed:
             oh = old_hashes[rel]
@@ -149,12 +177,34 @@ def main():
             else:
                 print("  + " + rel + "  " + oh + " -> " + nh)
                 actually += 1
-        print(str(actually) + "/" + str(len(changed)) + " files actually changed on disk.")
+        print(str(actually) + "/" + str(len(changed)) + " user files actually changed on disk.")
     else:
-        print("No tracked files changed (already up to date).")
+        print("No user files changed (already up to date).")
 
-    write_state({"last_apply": datetime.now().isoformat(timespec="seconds"), "last_apply_ok": True})
+    # --- Install root-owned files listed in the manifest (only changed ones) ---
+    root_failed = False
+    if not manifest:
+        print("No deploy_manifest.txt -- skipping root-owned installs.")
+    elif not root_changed:
+        print("No root-owned files in the manifest changed (" + str(len(manifest)) + " listed).")
+    else:
+        os.makedirs(SHM, exist_ok=True)
+        with open(ROOT_LIST, "w") as lf:
+            for s, t in root_changed:
+                lf.write(s + "\\t" + t + "\\n")
+        print("Installing root-owned files (" + str(len(root_changed)) + "):")
+        r = subprocess.run(["sudo", "-n", "/usr/local/bin/pi_deploy_root", DEPLOY_DIR, ROOT_LIST],
+                           capture_output=True, text=True, timeout=120)
+        print((r.stdout or "").strip())
+        if r.returncode != 0:
+            root_failed = True
+            print("ROOT INSTALL FAILED (exit " + str(r.returncode) + "): " + (r.stderr or "").strip())
 
+    write_state({"last_apply": datetime.now().isoformat(timespec="seconds"), "last_apply_ok": not root_failed})
+
+    if root_failed:
+        print("Aborting reboot -- fix the root install error and /sync again.")
+        return
     if no_reboot:
         print("Skipping reboot (--no-reboot). Restart the bot by hand to load the new code.")
     else:

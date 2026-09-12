@@ -21,6 +21,7 @@ import piDeployEntry from "./scripts/piDeployEntry";
 import piDeployRootEntry from "./scripts/piDeployRootEntry";
 import bootPauseEntry from "./scripts/bootPauseEntry";
 import deployInfoEntry from "./scripts/deployInfoEntry";
+import deployManifestEntry from "./scripts/deployManifestEntry";
 
 const scripts = [
   {
@@ -1216,6 +1217,7 @@ print("Weekly report sent.")
   piDeployRootEntry,
   ...bootPauseEntry,
   deployInfoEntry,
+  deployManifestEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
