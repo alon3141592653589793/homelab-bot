@@ -1,0 +1,17 @@
+# deploy_manifest.txt -- files /sync installs OUTSIDE ~/secure-pi-bot.
+# One entry per line:  <repo-relative-source><TAB><target>
+#   target = absolute path  -> root-owned, installed via pi_deploy_root.sh
+#   target = @crontab        -> applied as alon's crontab
+# Lines starting with # are ignored. Only files that CHANGED in the pull are
+# reinstalled (idempotent + safe). Source paths are relative to the repo root
+# (~/secure-pi-bot). Edit this in the app, commit, push, then /sync.
+#
+# Root-owned scripts (source kept under src/lib/pi-bot/root/):
+src/lib/pi-bot/root/pi-maintenance.sh	/usr/local/bin/pi-maintenance.sh
+src/lib/pi-bot/root/pi-audit.sh	/usr/local/bin/pi-audit.sh
+src/lib/pi-bot/root/pi-system-fixes.sh	/usr/local/bin/pi-system-fixes.sh
+src/lib/pi-bot/root/led_ctl.py	/usr/local/bin/led_ctl
+src/lib/pi-bot/root/pi_deploy_root.sh	/usr/local/bin/pi_deploy_root
+#
+# Crontab (applied as alon's crontab):
+src/lib/pi-bot/crontab.txt	@crontab

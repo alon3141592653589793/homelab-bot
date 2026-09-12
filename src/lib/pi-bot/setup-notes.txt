@@ -1,0 +1,144 @@
+# ============================================================
+# HomeLab Flow — Option A: the repo IS the source of truth
+# ============================================================
+# The bot's real .py files live in THIS repo (homelab-bot) under
+# src/lib/pi-bot/  (main.py, scripts/, modules/, root/, crontab.txt,
+# deploy_manifest.txt). /sync pulls the repo on the Pi, mirrors
+# src/lib/pi-bot/{main.py,scripts,modules} into ~/secure-pi-bot runtime
+# paths, installs root-owned files from deploy_manifest.txt, then reboots.
+#
+# One repo, one path. Edit scripts in the dashboard (src/lib/pi-bot/*.py),
+# commit+push to GitHub, then /sync from Discord. No manual copying.
+
+# ============================================================
+# ONE-TIME BOOTSTRAP on the Pi (do this ONCE over SSH)
+# ============================================================
+# 1. Clone the repo as ~/secure-pi-bot (your dashboard repo -- public, no auth):
+cd ~
+git clone https://github.com/alon3141592653589793/homelab-bot.git secure-pi-bot
+#    (if ~/secure-pi-bot already has your .env / logs, clone elsewhere then
+#     move .git in:  git clone ... /tmp/hlb && mv /tmp/hlb/.git ~/secure-pi-bot/
+#     and  cp -r /tmp/hlb/src ~/secure-pi-bot/)
+
+# 2. Restore your live .env if the clone didn't include it (it's gitignored):
+#    nano ~/secure-pi-bot/.env   # DISCORD_BOT_TOKEN, ALLOWED_USER_ID, channel IDs...
+
+# 3. Install the root helper (pi_deploy_root.sh) ONCE so /sync can install
+#    root-owned files later. It's in the repo under src/lib/pi-bot/root/:
+sudo cp ~/secure-pi-bot/src/lib/pi-bot/root/pi_deploy_root.sh /usr/local/bin/pi_deploy_root
+sudo chmod 755 /usr/local/bin/pi_deploy_root
+echo "alon ALL=(root) NOPASSWD: /usr/local/bin/pi_deploy_root" | sudo tee /etc/sudoers.d/pi-deploy
+sudo chmod 440 /etc/sudoers.d/pi-deploy && sudo visudo -c
+
+# 4. Run the FIRST /sync by hand (the bot's pi_deploy.py isn't live yet):
+python3 ~/secure-pi-bot/src/lib/pi-bot/scripts/pi_deploy.py --dry-run   # show what would change
+python3 ~/secure-pi-bot/src/lib/pi-bot/scripts/pi_deploy.py --no-reboot # mirror + install, stay up
+#    After this ~/secure-pi-bot/{main.py,scripts/,modules/} are populated and
+#    /usr/local/bin/{pi-maintenance.sh,pi-audit.sh,led_ctl,...} are installed.
+#    Start the bot, then from Discord:  /sync   (pulls, mirrors, reboots).
+
+# ============================================================
+# API KEY STORAGE (secure, not in .env)
+# ============================================================
+mkdir -p /home/alon/.secrets
+echo 'YOUR_GEMINI_KEY_HERE' > /home/alon/.secrets/gemini_key
+chmod 600 /home/alon/.secrets/gemini_key
+chmod 700 /home/alon/.secrets
+# Get key at: https://aistudio.google.com/app/apikey
+
+# ============================================================
+# UDEV RULE — allow alon to write cpufreq without sudo
+# ============================================================
+echo 'SUBSYSTEM=="cpu", ACTION=="add", RUN+="/bin/chmod -R a+w /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq"' | sudo tee /etc/udev/rules.d/99-cpufreq.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+# ============================================================
+# POLKIT RULE — allow alon to reboot/poweroff without sudo
+# ============================================================
+sudo tee /etc/polkit-1/rules.d/49-pi-bot.rules << 'POLKIT'
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.login1.reboot" ||
+         action.id == "org.freedesktop.login1.power-off" ||
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+         action.id == "org.freedesktop.login1.power-off-multiple-sessions") &&
+        subject.user == "alon") {
+        return polkit.Result.YES;
+    }
+});
+POLKIT
+sudo systemctl restart polkit
+
+# ============================================================
+# LED CONTROL -- root helper + sudoers
+# ============================================================
+sudo cp /home/alon/secure-pi-bot/src/lib/pi-bot/root/led_ctl.py /usr/local/bin/led_ctl
+sudo chmod 755 /usr/local/bin/led_ctl
+echo "alon ALL=(root) NOPASSWD: /usr/local/bin/led_ctl" | sudo tee /etc/sudoers.d/pi-leds
+sudo visudo -c
+
+# ============================================================
+# DIRECTORIES + LOGGING ENABLE
+# ============================================================
+mkdir -p /home/alon/secure-pi-bot/logs/weekly_reports
+mkdir -p /dev/shm/pi-bot
+touch /home/alon/secure-pi-bot/.logging_enabled
+
+# ============================================================
+# PYTHON DEPENDENCIES
+# ============================================================
+pip3 install --user requests psutil python-dotenv gspread
+
+# ============================================================
+# GOOGLE SHEETS — the ONLY cloud destination for logs + reports
+# ============================================================
+# log_sync.py -> "System Log" + "Fan Events" (every 30 min + at reboot)
+# weekly_report.py -> "Weekly Reports" (weekly Monday)
+# lynis_snapshot.py -> "Lynis Snapshots" (weekly Sunday, on score change)
+# outage_drain.py -> replays failed rows (every 5 min)
+#
+# Why Sheets (not Drive files)? A service account has NO storage quota,
+# so it CANNOT own/upload Drive files (403 storageQuotaExceeded). But
+# appending rows to a sheet YOU own (shared with the SA as Editor) works.
+#
+# Step 1 — Enable the Google Sheets API:
+#   https://console.cloud.google.com/ -> APIs & Services -> Library -> "Google Sheets API" -> ENABLE
+# Step 2 — Create a service account + download a JSON key:
+#   IAM & Admin > Service accounts > CREATE SERVICE ACCOUNT > KEYS tab > ADD KEY > JSON > Download
+#   Copy it to:
+      /home/alon/.secrets/gcp_service_account.json
+chmod 600 /home/alon/.secrets/gcp_service_account.json
+# Step 3 — Create ONE spreadsheet in Google Drive, Share it with the SA's
+#   client_email as Editor, grab the sheet ID from its URL, save it:
+echo 'YOUR_SHEET_ID_HERE' > /home/alon/.secrets/gsheets_log_id.txt
+chmod 600 /home/alon/.secrets/gsheets_log_id.txt
+#   worksheets are auto-created by the scripts on first run.
+
+# ============================================================
+# GOFILE MIRROR -- anti-censorship model backup (cloud-to-cloud via Pi)
+# ============================================================
+echo 'YOUR_GOFILE_TOKEN' > /home/alon/.secrets/gofile_token
+chmod 600 /home/alon/.secrets/gofile_token
+# Get token at: https://gofile.io/myprofile
+# Test: python3 ~/secure-pi-bot/scripts/gofile_mirror.py
+
+# ============================================================
+# CRONTAB -- /sync applies this automatically (deploy_manifest.txt @crontab)
+# After the first /sync, crontab is managed by the repo. To apply by hand:
+#   crontab ~/secure-pi-bot/src/lib/pi-bot/crontab.txt
+# ============================================================
+
+# ============================================================
+# WIREGUARD VPN (Docker: wg-easy) -- one-time setup
+# ============================================================
+#   python3 ~/secure-pi-bot/scripts/wireguard_setup.py \
+#       --host <public-ip-or-dyndns> --password <web-ui-pw>
+# Add alon to the docker group ONCE, then log ALL the way out and back in:
+#   sudo usermod -aG docker alon
+
+# ============================================================
+# NEW DISCORD CHANNELS (per-channel command routing)
+# ============================================================
+# Add to ~/secure-pi-bot/.env:
+#   ADGUARD_CHANNEL_ID=<discord channel id of the #adguard channel>
+#   VPN_CHANNEL_ID=<discord channel id of the #vpn channel>

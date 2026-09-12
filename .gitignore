@@ -30,3 +30,10 @@ dist-ssr
 .env
 .vite
 base44/.app.jsonc
+
+# Pi runtime copies -- /sync mirrors src/lib/pi-bot/ into ~/secure-pi-bot/{main.py,scripts,modules}.
+# Ignoring these root-level paths keeps `git status` clean ON THE PI (the dashboard
+# side never has them). Anchored to repo root so src/lib/pi-bot/ stays tracked.
+/main.py
+/scripts/
+/modules/

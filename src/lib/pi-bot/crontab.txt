@@ -1,0 +1,36 @@
+# Pi Crontab -- alon
+# Applied by /sync (deploy_manifest.txt @crontab entry) or: crontab <path>
+
+# CPU profile auto-switcher (instant exit if no change needed)
+* * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
+
+# System logger: temp, RAM, failed services every 10 min
+# Only active if .logging_enabled exists (/logging start|stop)
+*/10 * * * * python3 /home/alon/secure-pi-bot/scripts/system_logger.py
+
+# Fan event logger every minute (instant exit if /dev/shm/pi-bot missing)
+* * * * * python3 /home/alon/secure-pi-bot/scripts/fan_logger.py
+
+# Sync RAM logs to Google Sheets every 30 min (replaces SD-card flush)
+*/30 * * * * python3 /home/alon/secure-pi-bot/scripts/log_sync.py
+
+# Drain SD-card outage buffer -> cloud (retries failed API calls every 5 min)
+*/5 * * * * python3 /home/alon/secure-pi-bot/scripts/outage_drain.py
+
+# Weekly report every Monday 09:00. The script also self-gates by Israel
+# day-of-week + ISO-week idempotency, so it won't double-post even if the
+# Pi clock drifts or cron fires twice.
+0 9 * * 1 python3 /home/alon/secure-pi-bot/scripts/weekly_report.py
+
+# Daily maintenance 03:00 (flush logs, audit Sun, service check). apt-upgrade + reboot only Sun.
+0 3 * * * /usr/local/bin/pi-maintenance.sh >> /dev/shm/pi-bot/maintenance_cron.log 2>&1
+
+# Weekly Lynis snapshot to Google Sheets (versioned, keep last 50 + AI change-analysis)
+0 4 * * 0 python3 /home/alon/secure-pi-bot/scripts/lynis_snapshot.py
+
+# Weekly AI system audit (all info minified; Lynis in a separate pass)
+0 5 * * 0 python3 /home/alon/secure-pi-bot/scripts/ai_debug.py --audit
+
+# Gofile mirror keep-alive + integrity re-check -- UNCOMMENT only after you
+# confirm gofile_keepalive.py can resolve a real download on your account.
+# 17 */6 * * * python3 /home/alon/secure-pi-bot/scripts/gofile_keepalive.py >> /dev/shm/pi-bot/gofile_keepalive.log 2>&1

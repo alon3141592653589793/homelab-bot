@@ -1,27 +1,62 @@
-import aiDebugEntry from "./scripts/aiDebugEntry";
-import apiFailReportEntry from "./scripts/apiFailReportEntry";
-import testAllEntry from "./scripts/testAllEntry";
-import setupEntry from "./scripts/setupEntry";
-import crontabEntry from "./scripts/crontabEntry";
-import apiManagerEntry from "./scripts/apiManagerEntry";
-import profileEntries from "./scripts/profileEntries";
-import adguardHandlerEntry from "./scripts/adguardHandlerEntry";
-import vpnHandlerEntry from "./scripts/vpnHandlerEntry";
-import wireguardSetupEntry from "./scripts/wireguardSetupEntry";
-import bootDiagEntry from "./scripts/bootDiagEntry";
-import paramsEntry from "./scripts/paramsEntry";
-import systemFixesEntry from "./scripts/systemFixesEntry";
-import lynisSnapshotEntry from "./scripts/lynisSnapshotEntry";
-import ledEntries from "./scripts/ledEntries";
-import diagEntries from "./scripts/diagEntries";
-import constantsEntry from "./scripts/constantsEntry";
-import gofileMirrorEntry from "./scripts/gofileMirrorEntry";
-import gofileKeepaliveEntry from "./scripts/gofileKeepaliveEntry";
-import piDeployEntry from "./scripts/piDeployEntry";
-import piDeployRootEntry from "./scripts/piDeployRootEntry";
-import bootPauseEntry from "./scripts/bootPauseEntry";
-import deployInfoEntry from "./scripts/deployInfoEntry";
-import deployManifestEntry from "./scripts/deployManifestEntry";
+// Source of truth = the real .py/.sh/.txt files under src/lib/pi-bot/.
+// Each script's code is imported verbatim via Vite's ?raw suffix (the file
+// content as a string), so the dashboard shows exactly what /sync deploys.
+// Edit the real file under src/lib/pi-bot/, commit, push, /sync.
+
+import mainPy from "@/lib/pi-bot/main.py?raw";
+import reactivePy from "@/lib/pi-bot/modules/reactive.py?raw";
+import runnerPy from "@/lib/pi-bot/modules/runner.py?raw";
+import adguardPy from "@/lib/pi-bot/modules/adguard.py?raw";
+import vpnPy from "@/lib/pi-bot/modules/vpn.py?raw";
+
+import constantsPy from "@/lib/pi-bot/scripts/constants.py?raw";
+import apiManagerPy from "@/lib/pi-bot/scripts/api_manager.py?raw";
+import statusPy from "@/lib/pi-bot/scripts/status.py?raw";
+import cooldownPy from "@/lib/pi-bot/scripts/cooldown.py?raw";
+import restartPy from "@/lib/pi-bot/scripts/restart.py?raw";
+import shutdownPy from "@/lib/pi-bot/scripts/shutdown.py?raw";
+import systemLoggerPy from "@/lib/pi-bot/scripts/system_logger.py?raw";
+import fanLoggerPy from "@/lib/pi-bot/scripts/fan_logger.py?raw";
+import fanReportPy from "@/lib/pi-bot/scripts/fan_report.py?raw";
+import compressLogsPy from "@/lib/pi-bot/scripts/compress_logs.py?raw";
+import logSyncPy from "@/lib/pi-bot/scripts/log_sync.py?raw";
+import outageDrainPy from "@/lib/pi-bot/scripts/outage_drain.py?raw";
+import weeklyReportPy from "@/lib/pi-bot/scripts/weekly_report.py?raw";
+import lynisReportPy from "@/lib/pi-bot/scripts/lynis_report.py?raw";
+import lynisSnapshotPy from "@/lib/pi-bot/scripts/lynis_snapshot.py?raw";
+import aiDebugPy from "@/lib/pi-bot/scripts/ai_debug.py?raw";
+import apiFailReportPy from "@/lib/pi-bot/scripts/api_fail_report.py?raw";
+import testAllPy from "@/lib/pi-bot/scripts/test_all.py?raw";
+import bootDiagPy from "@/lib/pi-bot/scripts/boot_diag.py?raw";
+import paramsPy from "@/lib/pi-bot/scripts/params.py?raw";
+import netdiagPy from "@/lib/pi-bot/scripts/netdiag.py?raw";
+import diskHealthPy from "@/lib/pi-bot/scripts/disk_health.py?raw";
+import logTailPy from "@/lib/pi-bot/scripts/log_tail.py?raw";
+import bootPausePy from "@/lib/pi-bot/scripts/boot_pause.py?raw";
+import bootResumePy from "@/lib/pi-bot/scripts/boot_resume.py?raw";
+import ledManagerPy from "@/lib/pi-bot/scripts/led_manager.py?raw";
+import ledStatusPy from "@/lib/pi-bot/scripts/led_status.py?raw";
+import cpuProfilePy from "@/lib/pi-bot/scripts/cpu_profile.py?raw";
+import profileSchedulerPy from "@/lib/pi-bot/scripts/profile_scheduler.py?raw";
+import setProfileRestrictedPy from "@/lib/pi-bot/scripts/set_profile_restricted.py?raw";
+import setProfileUnlimitedPy from "@/lib/pi-bot/scripts/set_profile_unlimited.py?raw";
+import profileStatusPy from "@/lib/pi-bot/scripts/profile_status.py?raw";
+import updateBotStatusPy from "@/lib/pi-bot/scripts/update_bot_status.py?raw";
+import gofileMirrorPy from "@/lib/pi-bot/scripts/gofile_mirror.py?raw";
+import gofileKeepalivePy from "@/lib/pi-bot/scripts/gofile_keepalive.py?raw";
+import wireguardSetupPy from "@/lib/pi-bot/scripts/wireguard_setup.py?raw";
+import piDeployPy from "@/lib/pi-bot/scripts/pi_deploy.py?raw";
+import deployInfoPy from "@/lib/pi-bot/scripts/deploy_info.py?raw";
+
+import piMaintenanceSh from "@/lib/pi-bot/root/pi-maintenance.sh?raw";
+import piAuditSh from "@/lib/pi-bot/root/pi-audit.sh?raw";
+import piSystemFixesSh from "@/lib/pi-bot/root/pi-system-fixes.sh?raw";
+import ledCtlPy from "@/lib/pi-bot/root/led_ctl.py?raw";
+import piDeployRootSh from "@/lib/pi-bot/root/pi_deploy_root.sh?raw";
+
+import crontabTxt from "@/lib/pi-bot/crontab.txt?raw";
+import deployManifestTxt from "@/lib/pi-bot/deploy_manifest.txt?raw";
+import setupNotesTxt from "@/lib/pi-bot/setup-notes.txt?raw";
 
 const scripts = [
   {
@@ -30,201 +65,7 @@ const scripts = [
     path: "~/secure-pi-bot/main.py",
     description: "Bot entry point. Thermal monitoring (60s), failed services alerts (60s), presence sync (240s).",
     tags: ["discord", "bot", "listener"],
-    code: `import os
-import sys
-import json
-import asyncio
-import subprocess
-from dotenv import load_dotenv
-import discord
-from discord.ext import tasks
-from modules.reactive import handle_reactive_command
-from modules.adguard import handle_adguard_command
-from modules.vpn import handle_vpn_command
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
-import constants
-
-load_dotenv()
-
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-try:
-    ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
-    COMMAND_CHANNEL_ID = int(os.getenv("COMMAND_CHANNEL_ID", "0"))
-    ALERT_CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID", "0"))
-    ADGUARD_CHANNEL_ID = int(os.getenv("ADGUARD_CHANNEL_ID", "0"))
-    VPN_CHANNEL_ID = int(os.getenv("VPN_CHANNEL_ID", "0"))
-except ValueError:
-    ALLOWED_USER_ID = 0
-    COMMAND_CHANNEL_ID = 0
-    ALERT_CHANNEL_ID = 0
-    ADGUARD_CHANNEL_ID = 0
-    VPN_CHANNEL_ID = 0
-
-if not TOKEN or not ALLOWED_USER_ID or not COMMAND_CHANNEL_ID or not ALERT_CHANNEL_ID:
-    print("CRITICAL: Environment variables misconfigured.")
-    sys.exit(1)
-
-# Per-channel command routers (defaults to 0 = channel disabled). The /testall
-# lock is checked centrally in on_message so ALL channels pause during a run.
-CHANNEL_HANDLERS = {
-    COMMAND_CHANNEL_ID: handle_reactive_command,
-    ADGUARD_CHANNEL_ID: handle_adguard_command,
-    VPN_CHANNEL_ID: handle_vpn_command,
-}
-
-intents = discord.Intents.default()
-intents.message_content = True
-intents.reactions = True
-client = discord.Client(intents=intents)
-
-IS_TEST_MODE = "--alert-test" in sys.argv
-ALERT_THRESHOLD = constants.ALERT_THRESHOLD
-
-if IS_TEST_MODE:
-    try:
-        idx = sys.argv.index("--alert-test")
-        ALERT_THRESHOLD = float(sys.argv[idx + 1])
-        print(f"[TEST] Alert threshold: {ALERT_THRESHOLD}C")
-    except (ValueError, IndexError):
-        print("ERROR: Syntax: --alert-test <number>")
-        sys.exit(1)
-
-# Read directly from sysfs — no subprocess needed
-def get_core_temp() -> float:
-    try:
-        with open("/sys/class/thermal/thermal_zone0/temp") as f:
-            return int(f.read()) / 1000.0
-    except OSError:
-        return 45.0
-
-STATUS_FILE = "/dev/shm/pi-bot/.bot_status.json"
-
-@tasks.loop(seconds=240)
-async def sync_bot_presence():
-    await client.wait_until_ready()
-    try:
-        with open(STATUS_FILE) as f:
-            status_text = json.load(f).get("text", "Pi Online")
-        await client.change_presence(activity=discord.Game(name=status_text))
-    except (OSError, json.JSONDecodeError):
-        pass
-
-# Track last alert time to avoid spam (cooldown 5 min)
-_last_alert_ts = 0.0
-ALERTED_SVC_FILE = "/dev/shm/pi-bot/.alerted_services"
-
-@tasks.loop(seconds=60)
-async def passive_thermal_monitor():
-    global _last_alert_ts
-    await client.wait_until_ready()
-    
-    # --- Temperature check (with 5-min cooldown) ---
-    import time
-    temp = get_core_temp()
-    if temp >= ALERT_THRESHOLD:
-        now = time.monotonic()
-        if now - _last_alert_ts >= 300:
-            _last_alert_ts = now
-            ch = client.get_channel(ALERT_CHANNEL_ID)
-            if ch:
-                tag = "[TEST INTERCEPT]" if IS_TEST_MODE else "[THERMAL WARNING]"
-                await ch.send(
-                    f"{tag} Core temp breached threshold!\\n"
-                    f"Current: {temp:.1f}C (Threshold: {ALERT_THRESHOLD:.1f}C)\\n"
-                    f"Run /cooldown to reduce heat."
-                )
-                # Auto-trigger AI diagnosis on overheat (fire-and-forget)
-                ai_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "ai_debug.py")
-                await asyncio.create_subprocess_exec(
-                    "python3", "-u", ai_script, "--auto-error",
-                    f"Overheat: core temp {temp:.1f}C breached threshold {ALERT_THRESHOLD:.1f}C. Diagnose heat sources and suggest cooldown.",
-                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
-                )
-    
-    # --- Failed services check (alerts on NEW failures + recoveries) ---
-    current_failed = set()
-    try:
-        r = subprocess.run(
-            ["systemctl", "list-units", "--state=failed", "--no-legend", "--plain"],
-            capture_output=True, text=True, timeout=5
-        )
-        for line in r.stdout.splitlines():
-            parts = line.split()
-            if parts and "clamav" not in parts[0]:
-                current_failed.add(parts[0])
-    except Exception:
-        pass
-    
-    prev_failed = set()
-    try:
-        with open(ALERTED_SVC_FILE) as f:
-            prev_failed = set(json.load(f))
-    except (OSError, json.JSONDecodeError):
-        pass
-    
-    new_failed = current_failed - prev_failed
-    recovered = prev_failed - current_failed
-    
-    ch = client.get_channel(ALERT_CHANNEL_ID)
-    if ch:
-        if new_failed:
-            svc_list = "\\n".join(f"  | {s}" for s in sorted(new_failed))
-            await ch.send(f"**Service Alert** - {len(new_failed)} new failure(s):\\n{svc_list}")
-            # Auto-run AI diagnosis for newly failed services
-            services_str = ", ".join(sorted(new_failed))
-            auto_prompt = f"Automated alert: service(s) {services_str} just failed. Review system state and diagnose what went wrong. Suggest fixes."
-            script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "ai_debug.py")
-            # Fire-and-forget: ai_debug.py --auto-error posts its Auto-Diagnosis
-            # to the AI-debugger (REPORT) channel itself; echoing STDOUT here
-            # would duplicate the same diagnosis into the news/alert channel.
-            try:
-                await asyncio.create_subprocess_exec(
-                    "python3", "-u", script_path, "--auto-error", auto_prompt,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL
-                )
-            except Exception:
-                pass
-        if recovered:
-            svc_list = "\\n".join(f"  | {s}" for s in sorted(recovered))
-            await ch.send(f"**Service Recovered** - {len(recovered)} service(s) back online:\\n{svc_list}")
-    
-    try:
-        with open(ALERTED_SVC_FILE, "w") as f:
-            json.dump(sorted(current_failed), f)
-    except OSError:
-        pass
-
-@client.event
-async def on_ready():
-    print(f"Bot online as {client.user}")
-    os.makedirs("/dev/shm/pi-bot", exist_ok=True)
-    if os.path.exists("/home/alon/secure-pi-bot/.skip_autostart"):
-        print("AUTOSTART PAUSED (.skip_autostart) -- minimal mode, no monitoring tasks. /bootresume to restore.")
-        return
-    if not passive_thermal_monitor.is_running():
-        passive_thermal_monitor.start()
-    if not sync_bot_presence.is_running():
-        sync_bot_presence.start()
-
-@client.event
-async def on_message(message):
-    if message.author.id == client.user.id:
-        return
-    if message.author.id != ALLOWED_USER_ID:
-        return
-    handler = CHANNEL_HANDLERS.get(message.channel.id)
-    if not handler:
-        return
-    if os.path.exists("/dev/shm/pi-bot/.testall_running"):
-        await message.channel.send("⏳ /testall is running -- commands paused until it finishes.")
-        return
-    await handler(client, message)
-
-if __name__ == "__main__":
-    client.run(TOKEN)
-`,
+    code: mainPy,
   },
   {
     id: "reactive",
@@ -232,206 +73,7 @@ if __name__ == "__main__":
     path: "~/secure-pi-bot/modules/reactive.py",
     description: "Command router. Maps Discord /commands to scripts.",
     tags: ["router", "dispatcher"],
-    code: `import os
-import subprocess
-from modules.runner import run_script, confirm_and_run
-
-LOGGING_FLAG = "/home/alon/secure-pi-bot/.logging_enabled"
-LED_CTL = ["sudo", "-n", "/usr/local/bin/led_ctl"]
-
-def _led_ctl(mode):
-    return subprocess.run(LED_CTL + [mode], capture_output=True, text=True, timeout=10)
-
-async def handle_reactive_command(client, message):
-    if os.path.exists("/dev/shm/pi-bot/.testall_running"):
-        await message.channel.send("⏳ /testall is running -- commands paused until it finishes.")
-        return
-    content = message.content.strip().lower()
-    raw = message.content.strip()
-
-    if content == "/status":
-        await run_script(message, "status.py", "Querying system status...")
-
-    elif content == "/cooldown":
-        await run_script(message, "cooldown.py", "Running thermal cooldown...")
-
-    elif content in ("/restart", "/reboot"):
-        await confirm_and_run(client, message, "restart.py", "Reboot", "This will restart the Pi immediately.")
-
-    elif content == "/shutdown":
-        await confirm_and_run(client, message, "shutdown.py", "Shutdown", "This will power off the Pi. Physical access required to turn it back on.")
-
-    elif content == "/fanreport":
-        await run_script(message, "fan_report.py", "Reading fan log...")
-
-    elif content == "/apifails":
-        await run_script(message, "api_fail_report.py", "Reading API failure log (last 7d)...")
-
-    elif content == "/lynis":
-        await run_script(message, "lynis_report.py", "Running Lynis audit (this can take a couple minutes)...", timeout=240)
-
-    elif content == "/profile":
-        await run_script(message, "profile_status.py", "Checking current performance profile...")
-
-    elif content == "/setprofile restricted":
-        await run_script(message, "set_profile_restricted.py", "Applying restricted profile...")
-        await run_script(message, "update_bot_status.py", "")
-
-    elif content == "/setprofile unlimited":
-        await run_script(message, "set_profile_unlimited.py", "Applying unlimited profile...")
-        await run_script(message, "update_bot_status.py", "")
-
-    elif content == "/weeklyreport":
-        await run_script(message, "weekly_report.py", "Generating weekly report...", args=["--force"])
-
-    elif content == "/weeklyreport stop":
-        open("/home/alon/secure-pi-bot/.weekly_report_disabled", "w").close()
-        await message.channel.send("Weekly report disabled. Scheduled reports will not run.")
-
-    elif content == "/weeklyreport start":
-        try:
-            os.remove("/home/alon/secure-pi-bot/.weekly_report_disabled")
-        except FileNotFoundError:
-            pass
-        await message.channel.send("Weekly report enabled. Next scheduled report will run normally.")
-
-    elif content == "/logging start":
-        open(LOGGING_FLAG, "w").close()
-        await message.channel.send("Logging enabled.")
-
-    elif content == "/logging stop":
-        try:
-            os.remove(LOGGING_FLAG)
-        except FileNotFoundError:
-            pass
-        await message.channel.send("Logging disabled.")
-
-    elif content == "/fastfetch":
-        try:
-            result = subprocess.run(
-                ["fastfetch", "--logo", "none"],
-                capture_output=True, text=True, timeout=10
-            )
-            output = (result.stdout or result.stderr or "No output.").strip()[:1900]
-            await message.channel.send(output)
-        except FileNotFoundError:
-            await message.channel.send("fastfetch not installed. Run: sudo apt install fastfetch")
-        except Exception as e:
-            await message.channel.send(f"Error: {e}")
-
-    elif content == "/updates stop":
-        open("/home/alon/secure-pi-bot/.updates_disabled", "w").close()
-        await message.channel.send("Automatic updates PAUSED. The weekly maintenance (Sun 03:00) will skip apt upgrade + reboot (logs, audit, service-check still run). /updates start to resume.")
-
-    elif content == "/updates start":
-        try:
-            os.remove("/home/alon/secure-pi-bot/.updates_disabled")
-        except FileNotFoundError:
-            pass
-        await message.channel.send("Automatic updates RESUMED. Next weekly maintenance (Sun 03:00) will run apt upgrade + reboot as normal.")
-
-    elif raw.lower().startswith("/aidebug "):
-        rest = raw[9:].strip()
-        if rest:
-            # Tokens are passed individually so the script can consume model
-            # and on-demand tool prefixes (e.g. "gemini-3.5-flash lynis")
-            await run_script(message, "ai_debug.py", "Thinking...", args=rest.split(), timeout=300)
-        else:
-            await message.channel.send("Usage: /aidebug <question>\\nOptional model prefix: /aidebug [gemini-2.5-flash] <question>")
-
-    elif content == "/boot":
-        await run_script(message, "boot_diag.py", "Checking boot/reboot history...", timeout=30)
-
-    elif content in ("/parameters", "/params", "/paramters"):
-        await run_script(message, "params.py", "Listing current parameters...", timeout=15)
-
-    elif content in ("/sync", "/sync no-reboot", "/sync config", "/sync dry-run"):
-        if content == "/sync":
-            await run_script(message, "pi_deploy.py", "Pulling latest from the secure-pi-bot repo, then rebooting...", timeout=300)
-        elif content == "/sync dry-run":
-            await run_script(message, "pi_deploy.py", "Dry-run: fetching + listing what would change (no write, no reboot)...", args=["--dry-run"], timeout=120)
-        else:
-            await run_script(message, "pi_deploy.py", "Pulling latest from the repo (no reboot)...", args=["--no-reboot"], timeout=300)
-
-    elif content in ("/syncinfo", "/deployinfo"):
-        await run_script(message, "deploy_info.py", "Checking deploy status...", timeout=30)
-
-    elif content == "/bootpause":
-        await run_script(message, "boot_pause.py", "Pausing lab autostart for next boot...")
-
-    elif content == "/bootresume":
-        await run_script(message, "boot_resume.py", "Resuming lab autostart...")
-
-    elif content == "/testall":
-        await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
-
-    elif content == "/leds off":
-        r = _led_ctl("off")
-        await message.channel.send("LEDs forced OFF until reboot (dark for your sleep). /leds auto to resume." if r.returncode == 0 else "LEDs set off but couldn't apply now -- need /usr/local/bin/led_ctl in sudoers (see setup). They'll apply on the next pi-leds poll if the daemon runs.")
-
-    elif content == "/leds on":
-        r = _led_ctl("on")
-        await message.channel.send("LEDs forced ON until reboot. /leds auto to resume." if r.returncode == 0 else "LEDs set on but couldn't apply now -- need /usr/local/bin/led_ctl in sudoers (see setup).")
-
-    elif content == "/leds auto":
-        r = _led_ctl("auto")
-        await message.channel.send("LEDs back to automatic schedule (off 22:00-10:00 for your sleep; on for SSH + 1h grace)." if r.returncode == 0 else "LEDs back to auto but couldn't write override -- need /usr/local/bin/led_ctl in sudoers (see setup).")
-
-    elif content in ("/leds", "/leds status"):
-        await run_script(message, "led_status.py", "Reading LED state...", timeout=10)
-
-    elif content == "/diag":
-        await run_script(message, "netdiag.py", "Running network diagnostics...", timeout=30)
-
-    elif content == "/diskhealth":
-        await run_script(message, "disk_health.py", "Checking SD card health...", timeout=20)
-
-    elif content == "/logs" or raw.lower().startswith("/logs "):
-        await run_script(message, "log_tail.py", "", args=raw.split()[1:], timeout=15)
-
-    elif content == "/help":
-        await message.channel.send(
-            "Available commands:\\n"
-            "\\n== System & Power ==\\n"
-            "/status               - Temp/CPU/RAM/IP/uptime\\n"
-            "/fastfetch            - Pretty system summary\\n"
-            "/restart (/reboot)    - Reboot Pi (requires confirmation)\\n"
-            "/shutdown             - Power off Pi (requires confirmation)\\n"
-            "/cooldown             - Stop non-essential services to shed heat\\n"
-            "\\n== Thermal / Fan / LEDs ==\\n"
-            "/fanreport            - Show fan activation log\\n"
-            "/leds on|off|auto     - Lights on/off until reboot (off = dark for your sleep) / auto\\n"
-            "/leds                 - Show LED mode + SSH grace state\\n"
-            "\\n== Diagnostics ==\\n"
-            "/diag                 - Network + SSH + WiFi diagnostics\\n"
-            "/boot                 - Boot/reboot history + skip-cause diagnosis\\n"
-            "/diskhealth           - SD card health (dmesg, read-only, smart)\\n"
-            "/logs <name> [n]      - Tail any log file (/logs to list)\\n"
-            "\\n== Security ==\\n"
-            "/lynis                - Run Lynis security audit now\\n"
-            "\\n== Reports & API ==\\n"
-            "/weeklyreport         - Post weekly summary now\\n"
-            "/weeklyreport start|stop - Enable/disable scheduled weekly reports\\n"
-            "/apifails             - API call failure rate (last 7 days)\\n"
-            "\\n== Config / Profile / Toggles ==\\n"
-            "/parameters           - Current toggle/setting values (aliases /params, /paramters)\\n"
-            "/profile              - Show CPU performance profile\\n"
-            "/setprofile restricted|unlimited  - Switch CPU profile\\n"
-            "/logging start|stop   - Toggle system logger\\n"
-            "/updates start|stop   - Pause or resume automatic apt upgrade + reboot\\n"
-            "/bootpause            - Skip ALL lab autostart on next boot (cron off, bot minimal)\\n"
-            "/bootresume           - Restore crontab + clear skip flag (then /restart)\\n"
-            "\\n== Advanced ==\\n"
-            "/aidebug <question>   - Conversational AI diagnostic (optional: model prefix)\\n"
-            "/testall              - Run full test suite (posts to #testing)\\n"
-            "/sync                 - Pull latest from the secure-pi-bot repo, reboot\\n"
-            "/sync no-reboot       - Same, but skip the reboot\\n"
-            "/sync dry-run         - Fetch + list what would change (no write, no reboot)\\n"
-            "/syncinfo             - When GitHub repo was last updated + when /sync last ran\\n"
-            "\\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\\n"
-            "/help                 - This message"
-        )
-`,
+    code: reactivePy,
   },
   {
     id: "runner",
@@ -439,56 +81,39 @@ async def handle_reactive_command(client, message):
     path: "~/secure-pi-bot/modules/runner.py",
     description: "Execution helpers. run_script runs a subprocess and sends output to Discord.",
     tags: ["runner", "confirmation", "discord"],
-    code: `import subprocess
-import asyncio
-import os
-
-SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
-
-
-async def run_script(message, script_name, status_msg, args=None, timeout=45):
-    script_path = os.path.join(SCRIPTS_DIR, script_name)
-    if status_msg:
-        await message.channel.send(status_msg)
-    try:
-        cmd = ["python3", "-u", script_path] + (args or [])
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        output = (result.stdout or result.stderr or "No output.").strip()
-        if len(output) > 1900:
-            output = output[:1897] + "..."
-        await message.channel.send(output)
-    except subprocess.TimeoutExpired:
-        await message.channel.send(f"Script timed out after {timeout} seconds.")
-    except Exception as e:
-        await message.channel.send(f"Script error: {e}")
-
-
-async def confirm_and_run(client, message, script_name, action_name, description):
-    confirm_msg = await message.channel.send(
-        f"[{action_name.upper()} - CONFIRMATION REQUIRED]\\n"
-        f"{description}\\n"
-        f"React with ✅ to confirm or ❌ to cancel. Timeout: 30s."
-    )
-    await confirm_msg.add_reaction("\\u2705")
-    await confirm_msg.add_reaction("\\u274c")
-
-    def check(reaction, user):
-        return (
-            user.id == message.author.id
-            and reaction.message.id == confirm_msg.id
-            and str(reaction.emoji) in ("\\u2705", "\\u274c")
-        )
-
-    try:
-        reaction, _ = await client.wait_for("reaction_add", timeout=30.0, check=check)
-        if str(reaction.emoji) == "\\u2705":
-            await message.channel.send(f"{action_name} confirmed. Executing...")
-            await run_script(message, script_name, "")
-        else:
-            await message.channel.send(f"{action_name} cancelled.")
-    except asyncio.TimeoutError:
-        await message.channel.send(f"{action_name} timed out. Cancelled.")
-`,
+    code: runnerPy,
+  },
+  {
+    id: "adguard",
+    filename: "adguard.py",
+    path: "~/secure-pi-bot/modules/adguard.py",
+    description: "Discord command router for the #adguard channel. Drives the native AdGuardHome service: status/restart/stop/start/update/logs/test/version.",
+    tags: ["router", "adguard", "dns", "discord"],
+    code: adguardPy,
+  },
+  {
+    id: "vpn",
+    filename: "vpn.py",
+    path: "~/secure-pi-bot/modules/vpn.py",
+    description: "Discord command router for the #vpn channel. Drives the wg-easy Docker container (status/peers/logs/up/down/restart/port).",
+    tags: ["router", "vpn", "wireguard", "docker", "discord"],
+    code: vpnPy,
+  },
+  {
+    id: "constants",
+    filename: "constants.py",
+    path: "~/secure-pi-bot/scripts/constants.py",
+    description: "Shared constants imported by main.py and params.py so a value (e.g. the thermal alert threshold) lives in ONE place.",
+    tags: ["constants", "shared"],
+    code: constantsPy,
+  },
+  {
+    id: "api-manager",
+    filename: "api_manager.py",
+    path: "~/secure-pi-bot/scripts/api_manager.py",
+    description: "Cross-script API coordinator: rate limiting, critical-op locks (reboot waits), outage buffering/replay, and a 7-day rolling API call log.",
+    tags: ["api", "ratelimit", "outage", "shutdown", "shared"],
+    code: apiManagerPy,
   },
   {
     id: "status",
@@ -496,1231 +121,352 @@ async def confirm_and_run(client, message, script_name, action_name, description
     path: "~/secure-pi-bot/scripts/status.py",
     description: "System metrics: temp, CPU, GPU, RAM, profile, IP, uptime, current time. No voltage. 0.5s CPU interval.",
     tags: ["status", "hardware", "psutil"],
-    code: `import sys
-import subprocess
-from datetime import datetime
-
-try:
-    import psutil
-except ImportError:
-    print("FAILURE: psutil missing. pip3 install psutil")
-    sys.exit(1)
-
-def sysfs(path):
-    try:
-        with open(path) as f:
-            return f.read().strip()
-    except OSError:
-        return None
-
-def vcgencmd(arg):
-    try:
-        r = subprocess.run(["vcgencmd"] + arg.split(), capture_output=True, text=True, timeout=3)
-        return r.stdout.strip() if r.returncode == 0 else None
-    except Exception:
-        return None
-
-# Temperature
-raw_temp = sysfs("/sys/class/thermal/thermal_zone0/temp")
-temp = f"{int(raw_temp) / 1000:.1f}C" if raw_temp else "Unknown"
-
-# CPU — 0.5s interval
-cpu_pct = psutil.cpu_percent(interval=0.5)
-freq = psutil.cpu_freq()
-cpu_ghz = f"{freq.current / 1000:.2f} GHz" if freq else "Unknown"
-
-# GPU
-gpu_raw = vcgencmd("measure_clock core")
-gpu_mhz = f"{int(gpu_raw.split('=')[1]) // 1_000_000} MHz" if gpu_raw else "Unknown"
-
-# RAM
-vm = psutil.virtual_memory()
-ram_str = f"{vm.used // (1024*1024)} MB / {vm.total // (1024*1024)} MB ({vm.percent}%)"
-
-# RAM speed — vcgencmd can't measure SDRAM on Pi 4 (returns 0)
-# Try get_config, then detect by Pi model from device tree
-ram_speed = "N/A"
-config_raw = vcgencmd("get_config sdram_freq")
-if config_raw:
-    try:
-        val = int(config_raw.split("=")[1])
-        if val > 0:
-            ram_speed = f"{val} MHz"
-    except (ValueError, IndexError):
-        pass
-if ram_speed == "N/A":
-    model_raw = (sysfs("/proc/device-tree/model") or "").split(chr(0))[0].strip()
-    if "Pi 5" in model_raw:
-        ram_speed = "4267 MHz"
-    elif "Pi 4" in model_raw:
-        ram_speed = "3200 MHz"
-    elif "Pi Zero 2" in model_raw or "Pi 3" in model_raw:
-        ram_speed = "450 MHz"
-    elif "Pi Zero" in model_raw:
-        ram_speed = "400 MHz"
-
-# Profile
-try:
-    with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq") as f:
-        max_khz = int(f.read().strip())
-    profile = "Restricted" if max_khz <= 600000 else "Unlimited"
-except OSError:
-    profile = "Unknown"
-
-# IP
-try:
-    r = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=3)
-    ip = r.stdout.strip().split()[0] if r.stdout.strip() else "Unknown"
-except Exception:
-    ip = "Unknown"
-
-# Uptime
-try:
-    boot_dt = datetime.fromtimestamp(psutil.boot_time())
-    d = datetime.now() - boot_dt
-    uptime = f"{d.days}d {d.seconds//3600}h {(d.seconds%3600)//60}m"
-except Exception:
-    uptime = "Unknown"
-
-# Current time
-now_str = datetime.now().strftime("%H:%M:%S")
-
-# Last upgrade
-last_upgrade = sysfs("/home/alon/.secrets/last_upgrade.txt") or "Unknown"
-
-print(
-    f"**Pi Status** — {now_str}\\n"
-    f"Temp: {temp} | CPU: {cpu_pct}% {cpu_ghz}\\n"
-    f"GPU: {gpu_mhz} | Profile: {profile}\\n"
-    f"RAM: {ram_str} | RAM Speed: {ram_speed}\\n"
-    f"IP: {ip} | Uptime: {uptime}\\n"
-    f"Last Upgrade: {last_upgrade}"
-)
-`,
+    code: statusPy,
   },
-  {
-    id: "fan-logger",
-    filename: "fan_logger.py",
-    path: "~/secure-pi-bot/scripts/fan_logger.py",
-    description: "Logs fan ON/OFF transitions to /dev/shm (RAM). 60s boot delay. No SD writes. Flushed by compress_logs.py before reboot. Caps at 2000 lines. This Pi's fan is hardwired always-on (pwm1 read-only, pwm1_enable flip has no effect) — the logger records one continuous 'on' session from boot; no ON/OFF transitions to track.",
-    tags: ["fan", "logging", "thermal"],
-    code: `import os
-import json
-from datetime import datetime
-
-PIBOT_DIR = "/dev/shm/pi-bot"
-RAM_LOG = f"{PIBOT_DIR}/fan_events.jsonl"
-STATE_FILE = f"{PIBOT_DIR}/fan_state.txt"
-MAX_LINES = 2000
-
-# Wait 60s after boot — fan behavior is erratic during early boot
-try:
-    with open("/proc/uptime") as f:
-        uptime = float(f.read().split()[0])
-    if uptime < 60:
-        raise SystemExit(0)
-except OSError:
-    pass
-
-# If the RAM dir doesn't exist yet the bot hasn't started — skip silently
-if not os.path.isdir(PIBOT_DIR):
-    raise SystemExit(0)
-
-def get_fan_active() -> bool:
-    # This Pi's fan is a 2-wire fan hardwired to 5V/GND — always on while the
-    # Pi has power. Confirmed uncontrollable: pwm1 is read-only (root gets
-    # "Operation not permitted") and flipping pwm1_enable to manual did not
-    # stop it. The gpio-fan overlay is loaded but controls nothing, so we
-    # record one continuous "on" session from boot — no ON/OFF transitions.
-    return True
-
-now_active = get_fan_active()
-now_str = datetime.now().isoformat(timespec="seconds")
-
-# Read previous state (tiny JSON in RAM)
-prev_state = None
-try:
-    with open(STATE_FILE) as f:
-        prev_state = json.load(f).get("active")
-except (OSError, json.JSONDecodeError):
-    pass
-
-# Write new state
-with open(STATE_FILE, "w") as f:
-    json.dump({"active": now_active, "ts": now_str}, f)
-
-# Only append to log on state change (or first run)
-if prev_state is None or prev_state != now_active:
-    note = "initial" if prev_state is None else None
-    event = {"ts": now_str, "event": "on" if now_active else "off"}
-    if note:
-        event["note"] = note
-
-    # Cap log size to avoid unbounded RAM growth
-    try:
-        with open(RAM_LOG) as f:
-            existing = f.readlines()
-    except OSError:
-        existing = []
-
-    if len(existing) >= MAX_LINES:
-        existing = existing[MAX_LINES // 2:]  # drop oldest half
-
-    existing.append(json.dumps(event) + "\\n")
-    with open(RAM_LOG, "w") as f:
-        f.writelines(existing)
-`,
-  },
-  {
-    id: "fan-report",
-    filename: "fan_report.py",
-    path: "~/secure-pi-bot/scripts/fan_report.py",
-    description: "Reads fan event log (RAM + disk) and outputs plain-text summary for Discord.",
-    tags: ["fan", "report", "discord"],
-    code: `import os
-import json
-import sys
-from datetime import datetime
-
-RAM_LOG = "/dev/shm/pi-bot/fan_events.jsonl"
-DISK_LOG = "/home/alon/secure-pi-bot/logs/fan_events.jsonl"
-
-events = []
-seen = set()
-for path in (DISK_LOG, RAM_LOG):
-    if not os.path.exists(path):
-        continue
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(e, dict) or "ts" not in e:
-                continue
-            if e["ts"] not in seen:
-                seen.add(e["ts"])
-                events.append(e)
-
-events.sort(key=lambda x: x["ts"])
-
-if not events:
-    print("No fan events logged yet.")
-    sys.exit(0)
-
-# Build sessions: on -> off pairs
-sessions = []
-i = 0
-while i < len(events):
-    if events[i]["event"] == "on":
-        start = events[i]["ts"]
-        end = None
-        for j in range(i + 1, len(events)):
-            if events[j]["event"] == "off":
-                end = events[j]["ts"]
-                i = j
-                break
-        sessions.append((start, end))
-    i += 1
-
-lines = [f"**Fan Log** ({len(sessions)} sessions)"]
-for start, end in sessions[-20:]:
-    s = datetime.fromisoformat(start)
-    if end:
-        e = datetime.fromisoformat(end)
-        secs = (e - s).total_seconds()
-        lines.append(f"  {s.strftime('%m/%d %H:%M')} -> {e.strftime('%H:%M')} ({int(secs//60)}m{int(secs%60):02d}s)")
-    else:
-        lines.append(f"  {s.strftime('%m/%d %H:%M')} -> running")
-
-now = datetime.now()
-total = sum(
-    (datetime.fromisoformat(e) - datetime.fromisoformat(s)).total_seconds() if e
-    else (now - datetime.fromisoformat(s)).total_seconds()
-    for s, e in sessions
-)
-lines.append(f"Total fan-on: {int(total // 60)}m")
-print("\\n".join(lines))
-`,
-  },
-  {
-    id: "lynis-report",
-    filename: "lynis_report.py",
-    path: "~/secure-pi-bot/scripts/lynis_report.py",
-    description: "Manual Lynis security audit invoked by /lynis. Surfaces warnings (W:), suggestions (S:), hardening index, and test count from a quick scan. Self-contained 180s internal timeout (outer runner gets 240s).",
-    tags: ["audit", "security", "lynis", "discord"],
-    code: `import subprocess
-from datetime import datetime
-
-try:
-    r = subprocess.run(
-        ["lynis", "audit", "system", "--quick", "--no-colors"],
-        capture_output=True, text=True, timeout=180
-    )
-    out = (r.stdout or r.stderr or "").strip()
-except FileNotFoundError:
-    print("FAILURE: lynis not installed. Run: sudo apt install lynis")
-    raise SystemExit(0)
-except subprocess.TimeoutExpired:
-    print("FAILURE: lynis timed out after 180s")
-    raise SystemExit(0)
-
-lines = out.splitlines()
-interesting = []
-for ln in lines:
-    s = ln.strip()
-    if s.startswith("W:") or s.startswith("S:") or "Hardening index" in s or "Tests performed" in s:
-        interesting.append(s)
-
-ts = datetime.now().strftime("%H:%M")
-header = f"**Lynis Report** [{ts}]"
-if not interesting:
-    print(f"{header}\\nNo warnings or suggestions found.\\n\\n{out[-1500:]}")
-else:
-    body = "\\n".join(interesting)
-    if len(body) > 1800:
-        body = body[:1800]
-    print(f"{header}\\n{body}")
-`,
-  },
-  {
-    id: "system-logger",
-    filename: "system_logger.py",
-    path: "~/secure-pi-bot/scripts/system_logger.py",
-    description: "10-min cron logger. Temp to RAM. Warns on 90%+ RAM and disk I/O spikes. No continuous RAM logging. Failed services handled by bot.",
-    tags: ["logging", "temperature", "warnings"],
-    code: `import os
-import sys
-import json
-from datetime import datetime
-
-ENABLED_FLAG = "/home/alon/secure-pi-bot/.logging_enabled"
-PIBOT_DIR = "/dev/shm/pi-bot"
-RAM_LOG = f"{PIBOT_DIR}/system_log.jsonl"
-DISK_IO_STATE = f"{PIBOT_DIR}/.disk_io_state"
-MAX_LINES = 1500
-
-if not os.path.exists(ENABLED_FLAG):
-    sys.exit(0)
-
-os.makedirs(PIBOT_DIR, exist_ok=True)
-
-try:
-    import psutil
-except ImportError:
-    sys.exit(1)
-
-ts = datetime.now().isoformat(timespec="seconds")
-
-# Temp — direct sysfs read
-try:
-    with open("/sys/class/thermal/thermal_zone0/temp") as f:
-        temp_c = round(int(f.read()) / 1000.0, 1)
-except OSError:
-    temp_c = None
-
-# RAM — only flag at 90%+ (not logged every tick)
-vm = psutil.virtual_memory()
-ram_warning = vm.percent >= 90.0
-
-# Disk I/O spike — compare with last reading (>5 MB/s avg = spike)
-disk_warning = False
-current_io = psutil.disk_io_counters()
-if current_io:
-    if os.path.exists(DISK_IO_STATE):
-        try:
-            with open(DISK_IO_STATE) as f:
-                prev = json.load(f)
-            delta = (current_io.read_bytes + current_io.write_bytes) - (prev["read_bytes"] + prev["write_bytes"])
-            elapsed = (datetime.now() - datetime.fromisoformat(prev["ts"])).total_seconds()
-            if elapsed > 0 and (delta / elapsed) / (1024 * 1024) > 5:
-                disk_warning = True
-        except Exception:
-            pass
-    with open(DISK_IO_STATE, "w") as f:
-        json.dump({"read_bytes": current_io.read_bytes, "write_bytes": current_io.write_bytes, "ts": ts}, f)
-
-# Build entry — temp + warnings only (no continuous RAM)
-entry = {"ts": ts, "temp_c": temp_c}
-if ram_warning:
-    entry["ram_warning"] = True
-    entry["ram_pct"] = round(vm.percent, 1)
-if disk_warning:
-    entry["disk_spike"] = True
-
-# Temp spike detection — seek to end for last line
-last_temp = None
-if os.path.exists(RAM_LOG):
-    try:
-        with open(RAM_LOG, "rb") as f:
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - 512))
-            tail = f.read().decode(errors="ignore")
-            last_line = [l for l in tail.splitlines() if l.strip()][-1] if tail.strip() else None
-            if last_line:
-                last_temp = json.loads(last_line).get("temp_c")
-    except Exception:
-        pass
-
-if last_temp is not None and temp_c is not None and temp_c - last_temp >= 5.0:
-    entry["spike"] = True
-
-# Cap log size
-try:
-    with open(RAM_LOG) as f:
-        lines = f.readlines()
-except OSError:
-    lines = []
-
-if len(lines) >= MAX_LINES:
-    lines = lines[MAX_LINES // 2:]
-
-lines.append(json.dumps(entry) + "\\n")
-with open(RAM_LOG, "w") as f:
-    f.writelines(lines)
-`,
-  },
-  {
-    id: "compress-logs",
-    filename: "compress_logs.py",
-    path: "~/secure-pi-bot/scripts/compress_logs.py",
-    description: "Called before reboot. Triggers log_sync.py to flush RAM logs to Google Sheets (NO SD writes). Thin wrapper — syncing logic lives in log_sync.py.",
-    tags: ["logging", "compression", "maintenance"],
-    code: `import os
-import subprocess
-
-SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Before reboot — flush any unsynced RAM logs to Google Sheets (NO SD writes).
-# Delta-sync + service-account auth live in log_sync.py.
-r = subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "log_sync.py")],
-                   capture_output=True, text=True, timeout=120)
-out = (r.stdout or "").strip()
-err = (r.stderr or "").strip()
-if err:
-    print(f"Log sync warning: {err}")
-print(out or "Logs synced to Google Sheets.")
-`,
-  },
-  {
-    id: "weekly-report",
-    filename: "weekly_report.py",
-    path: "~/secure-pi-bot/scripts/weekly_report.py",
-    description: "Weekly report (Israel-time keyed, ISO-week idempotent): temp, fan. Posts to Discord + appends the full report as a new row to the 'Weekly Reports' worksheet inside the same Google Sheet that log_sync.py uses (rolling, keep last 50). No Drive files -- service accounts have no storage quota (403 storageQuotaExceeded). Warns Discord if the Sheet sync fails >1 day. Day-of-week gate (Monday, Israel time) uses worldtimeapi -> system-clock fallback, not the Pi clock. Manual /weeklyreport uses --force to bypass guards. Can be disabled via /weeklyreport stop.",
-    tags: ["report", "discord", "weekly"],
-    code: `import os
-import sys
-import json
-import time
-import api_manager
-from datetime import datetime, timedelta
-
-try:
-    import psutil
-    import requests
-except ImportError as e:
-    print(f"FAILURE: {e}")
-    sys.exit(1)
-
-BOT_DIR = "/home/alon/secure-pi-bot"
-SHM = "/dev/shm/pi-bot"
-STATE_FILE = f"{SHM}/.weekly_report_state.json"
-SHEET_STATE = f"{SHM}/.weekly_sheet_state.json"
-os.makedirs(SHM, exist_ok=True)
-TEST_MODE = bool(os.getenv("PI_TEST_MODE"))
-FORCE = "--force" in sys.argv  # manual /weeklyreport bypasses day/idempotency guards
-
-# --- Israel local time (true time when online, Pi clock fallback) ---
-# The Pi's onboard clock drifts, so day-of-week gating uses Israel time from
-# a network time API when reachable, falling back to the system clock -> Asia/Jerusalem.
-def israel_now():
-    try:
-        import urllib.request
-        with urllib.request.urlopen("http://worldtimeapi.org/api/timezone/Asia/Jerusalem", timeout=5) as r:
-            return datetime.fromisoformat(json.load(r)["datetime"])
-    except Exception:
-        pass
-    try:
-        from zoneinfo import ZoneInfo
-        return datetime.now(ZoneInfo("Asia/Jerusalem"))
-    except Exception:
-        from datetime import timezone
-        return datetime.now(timezone(timedelta(hours=3)))
-
-def iso_week(dt):
-    return dt.strftime("%G-W%V")  # ISO week id, stable across year boundaries
-
-if os.path.exists(f"{BOT_DIR}/.weekly_report_disabled"):
-    print("Weekly report disabled. Use /weeklyreport start to re-enable.")
-    sys.exit(0)
-
-now = israel_now()
-this_week = iso_week(now)
-state = {}
-if not TEST_MODE and not FORCE:
-    try:
-        with open(STATE_FILE) as f:
-            state = json.load(f)
-    except (OSError, ValueError):
-        pass
-    # Idempotency: skip if already posted this Israel ISO-week
-    if state.get("week") == this_week:
-        sys.exit(0)
-    # Day-of-week guard (Monday in Israel time) -- the Pi clock drifts when
-    # unpowered, so we bind the weekly boundary to the Israel weekday, which
-    # is fetched from the network with a system-clock fallback.
-    if now.isoweekday() != 1:
-        sys.exit(0)
-
-from dotenv import load_dotenv
-load_dotenv(f"{BOT_DIR}/.env")
-BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-if not BOT_TOKEN:
-    print("FAILURE: DISCORD_BOT_TOKEN not set")
-    sys.exit(1)
-try:
-    REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", "0"))
-except ValueError:
-    REPORT_CHANNEL_ID = 0
-
-DISCORD_URL = f"https://discord.com/api/v10/channels/{REPORT_CHANNEL_ID}/messages"
-DISCORD_HEADERS = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
-
-def post(text):
-    import time
-    ok = True
-    for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
-        for attempt in range(4):
-            r = requests.post(DISCORD_URL, json={"content": chunk}, headers=DISCORD_HEADERS, timeout=10)
-            if r.status_code in (200, 201):
-                break
-            if r.status_code == 429 and attempt < 3:
-                # Respect Discord's Retry-After (cap 15s) so a rate-limit no
-                # longer aborts the whole weekly report — up to 3 retries.
-                time.sleep(min(float(r.headers.get("Retry-After", 2)) + 1, 15))
-                continue
-            print(f"FAILURE: Discord {r.status_code}: {r.text}")
-            ok = False
-            return ok
-    return ok
-
-cutoff = now - timedelta(days=7)
-
-def load_jsonl_since(paths, ts_key_candidates):
-    out = []
-    seen = set()
-    for path in paths:
-        if not os.path.exists(path):
-            continue
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    e = json.loads(line)
-                    ts_str = next((e[k] for k in ts_key_candidates if k in e), None)
-                    if not ts_str or ts_str in seen:
-                        continue
-                    if datetime.fromisoformat(ts_str) >= cutoff:
-                        seen.add(ts_str)
-                        out.append(e)
-                except Exception:
-                    continue
-    return out
-
-sys_entries = load_jsonl_since(
-    [f"{BOT_DIR}/logs/system_log.jsonl", "/dev/shm/pi-bot/system_log.jsonl"],
-    ["ts_start", "ts"]
-)
-fan_entries = sorted(
-    load_jsonl_since(
-        [f"{BOT_DIR}/logs/fan_events.jsonl", "/dev/shm/pi-bot/fan_events.jsonl"],
-        ["ts"]
-    ),
-    key=lambda x: x["ts"]
-)
-
-# Stats
-temps = [e.get("temp_c") or e.get("temp_avg_c") for e in sys_entries]
-temps = [t for t in temps if t is not None]
-spikes = [e for e in sys_entries if e.get("spike") or e.get("spike_flag")]
-
-# Fan sessions
-fan_sessions = []
-i = 0
-while i < len(fan_entries):
-    if fan_entries[i]["event"] == "on":
-        start = fan_entries[i]["ts"]
-        end = next((fan_entries[j]["ts"] for j in range(i+1, len(fan_entries)) if fan_entries[j]["event"] == "off"), None)
-        fan_sessions.append((start, end))
-        if end:
-            i = next(j for j in range(i+1, len(fan_entries)) if fan_entries[j]["ts"] == end)
-    i += 1
-
-total_fan_s = sum(
-    (datetime.fromisoformat(e) - datetime.fromisoformat(s)).total_seconds() if e
-    else (now - datetime.fromisoformat(s)).total_seconds()
-    for s, e in fan_sessions
-)
-
-try:
-    boot = datetime.fromtimestamp(psutil.boot_time())
-    d = datetime.now() - boot
-    uptime = f"{d.days}d {d.seconds//3600}h"
-except Exception:
-    uptime = "Unknown"
-
-week = now.strftime("%b %d, %Y")
-lines = [f"**Weekly Pi Report -- {week}**", f"Uptime: {uptime}"]
-
-lines.append(
-    f"Temp (7d): Avg {sum(temps)/len(temps):.1f}C | Min {min(temps):.1f}C | Max {max(temps):.1f}C"
-    if temps else "Temp: No data (enable with /logging start)"
-)
-
-if spikes:
-    sp = " | ".join(
-        f"{datetime.fromisoformat(s.get('ts') or s.get('ts_start','')).strftime('%m/%d %H:%M')}={s.get('temp_c') or s.get('temp_avg_c')}C"
-        for s in spikes[-5:]
-    )
-    lines.append(f"Spikes ({len(spikes)}): {sp}")
-
-lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total")
-
-report = "\\n".join(lines)
-if TEST_MODE:
-    print(f"[TEST MODE] weekly report built ({len(report)} chars) -- Discord+Sheets send skipped, state not persisted.")
-    print(report)
-    sys.exit(0)
-
-# --- Send to Discord (best-effort; failure no longer aborts Drive sync) ---
-discord_ok = post(report)
-
-# --- Sync to Google Sheets: append a new row to the 'Weekly Reports' worksheet
-# Service accounts have NO storage quota -- uploading Drive files 403s with
-# storageQuotaExceeded. But appending to a user-owned shared Sheet works
-# because the SA isn't owning a new file, just adding rows to YOUR sheet.
-WR_KEY = "/home/alon/.secrets/gcp_service_account.json"
-WR_SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
-WR_WS = "Weekly Reports"
-WR_HEADERS = ["ts", "week", "uptime", "temp_avg_c", "temp_min_c", "temp_max_c", "fan_sessions", "fan_minutes", "spikes", "report"]
-try:
-    import gspread
-except ImportError:
-    gspread = None
-WR_READY = gspread is not None and os.path.exists(WR_KEY) and os.path.exists(WR_SHEET_ID_FILE)
-
-def sync_to_sheet(report_text):
-    if not WR_READY:
-        return False, "gspread lib/keys/sheet-id unavailable"
-    try:
-        gc = gspread.service_account(filename=WR_KEY)
-        sh = gc.open_by_key(open(WR_SHEET_ID_FILE).read().strip())
-        try:
-            ws = sh.worksheet(WR_WS)
-        except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(WR_WS, rows=1, cols=len(WR_HEADERS))
-            ws.append_row(WR_HEADERS)
-    except Exception as e:
-        return False, str(e)
-    tavg = tmin = tmax = ""
-    if temps:
-        tavg = round(sum(temps) / len(temps), 1)
-        tmin = min(temps); tmax = max(temps)
-    week_label = now.strftime("%G-W%V")
-    spikes_str = "; ".join(
-        f"{datetime.fromisoformat(s.get('ts') or s.get('ts_start','')).strftime('%m/%d')}={s.get('temp_c') or s.get('temp_avg_c')}"
-        for s in (spikes[-10:] if spikes else [])
-    )
-    row = [now.isoformat(timespec="seconds"), week_label, uptime, tavg, tmin, tmax,
-           len(fan_sessions), int(total_fan_s // 60), spikes_str, report_text[:4000]]
-    try:
-        api_manager.rate_limit("gsheets")
-        ws.append_row(row, value_input_option="RAW")
-        api_manager.record("gsheets", True)
-        # Roll the window: keep the most recent 50 rows (header stays at row 1).
-        data = [r for r in ws.get_all_values() if r and r[0]]
-        if len(data) > 50:
-            ws.delete_rows(2, len(data) - 50 + 1)
-        return True, WR_WS
-    except Exception as e:
-        api_manager.record("gsheets", False)
-        return False, str(e)
-
-sheet_ok, sheet_msg = sync_to_sheet(report)
-if not sheet_ok:
-    # Failed append -> queue for outage_drain (payload shaped for handle_sheets).
-    api_manager.queue_outage("gsheets", "rows", {
-        "ws": WR_WS,
-        "rows": [[now.isoformat(timespec="seconds"), now.strftime("%G-W%V"), uptime,
-                  (round(sum(temps)/len(temps),1) if temps else ""),
-                  (min(temps) if temps else ""), (max(temps) if temps else ""),
-                  len(fan_sessions), int(total_fan_s//60),
-                  "; ".join(f"{datetime.fromisoformat(s.get('ts') or s.get('ts_start','')).strftime('%m/%d')}={s.get('temp_c') or s.get('temp_avg_c')}" for s in (spikes[-10:] if spikes else [])),
-                  report[:4000]]]
-    })
-
-# --- Sheet-fail tracking: warn Discord if the sync fails for > 1 day ---
-ds = {}
-try:
-    if os.path.exists(SHEET_STATE):
-        with open(SHEET_STATE) as f:
-            ds = json.load(f)
-except (OSError, ValueError):
-    pass
-if sheet_ok:
-    ds = {"fail_since": None}
-else:
-    if not ds.get("fail_since"):
-        ds["fail_since"] = now.isoformat()
-        ds["err"] = str(sheet_msg)[:200]
-    age = (now - datetime.fromisoformat(ds["fail_since"])).total_seconds()
-    if age > 86400:
-        post(f"**Weekly report Sheet sync warning** [{now.strftime('%H:%M')}] -- failing for >1 day ({int(age//3600)}h). Last error: {ds.get('err','')}")
-try:
-    with open(SHEET_STATE, "w") as f:
-        json.dump(ds, f)
-except OSError:
-    pass
-
-# --- Mark this Israel ISO-week posted (only if at least one channel succeeded) ---
-if discord_ok or sheet_ok:
-    state["week"] = this_week
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f)
-    except OSError:
-        pass
-else:
-    print("Weekly report: both Discord and Sheets failed; not marking week posted (will retry next eligible run).")
-
-print("Weekly report sent.")
-`,
-  },
-  aiDebugEntry,
-  apiFailReportEntry,
-  testAllEntry,
-  adguardHandlerEntry,
-  vpnHandlerEntry,
-  wireguardSetupEntry,
-  bootDiagEntry,
-  paramsEntry,
-  constantsEntry,
-  gofileMirrorEntry,
-  gofileKeepaliveEntry,
-  piDeployEntry,
-  piDeployRootEntry,
-  ...bootPauseEntry,
-  deployInfoEntry,
-  deployManifestEntry,
   {
     id: "cooldown",
     filename: "cooldown.py",
     path: "~/secure-pi-bot/scripts/cooldown.py",
-    description: "Stops non-essential services. Uses systemctl without sudo (works if alon is in the 'adm' group or has polkit rules).",
+    description: "Stops non-essential services (nginx, lightdm, bluetooth, cups) to shed heat.",
     tags: ["thermal", "services"],
-    code: `import subprocess
-
-TARGETS = ["nginx", "lightdm", "bluetooth", "cups"]
-
-stopped = []
-for svc in TARGETS:
-    r = subprocess.run(["systemctl", "is-active", "--quiet", svc])
-    if r.returncode == 0:  # active
-        subprocess.run(["systemctl", "stop", svc], capture_output=True)
-        stopped.append(svc)
-
-if stopped:
-    print(f"Stopped: {', '.join(stopped)}")
-else:
-    print("No target services were active.")
-`,
+    code: cooldownPy,
   },
   {
     id: "restart",
     filename: "restart.py",
     path: "~/secure-pi-bot/scripts/restart.py",
-    description: "Logs then reboots via systemctl (polkit rule grants permission, no sudo). Requires /etc/polkit-1/rules.d/49-pi-bot.rules.",
+    description: "Flushes logs, waits for critical ops, reboots via systemctl (polkit, no sudo).",
     tags: ["reboot"],
-    code: `import subprocess, os, json
-from datetime import datetime
-SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
-
-print("Flushing logs...")
-subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
-
-# Wait for any in-flight critical cloud ops (Drive/Sheets sync) before rebooting
-import api_manager
-api_manager.wait_critical()
-
-# Use systemctl reboot — goes through polkit (no sudo, no password prompt)
-result = subprocess.run(["systemctl", "reboot"], capture_output=True, text=True, timeout=10)
-if result.returncode != 0:
-    err = result.stderr.strip() or result.stdout.strip() or "unknown error"
-    print(f"FAILED to reboot: {err}")
-    # Log to RAM
-    try:
-        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
-        with open(LOG_FILE, "a") as f:
-            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "cmd": "restart", "status": "failed", "error": err}) + "\\n")
-    except OSError:
-        pass
-else:
-    print("Rebooting...")
-    try:
-        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
-        with open(LOG_FILE, "a") as f:
-            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "cmd": "restart", "status": "ok"}) + "\\n")
-    except OSError:
-        pass
-`,
+    code: restartPy,
   },
   {
     id: "shutdown",
     filename: "shutdown.py",
     path: "~/secure-pi-bot/scripts/shutdown.py",
-    description: "Logs then powers off via systemctl (polkit rule grants permission, no sudo). Requires /etc/polkit-1/rules.d/49-pi-bot.rules.",
+    description: "Flushes logs, waits for critical ops, powers off via systemctl (polkit, no sudo).",
     tags: ["shutdown"],
-    code: `import subprocess, os, json
-from datetime import datetime
-SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = "/dev/shm/pi-bot/command_log.jsonl"
-
-print("Flushing logs...")
-subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], capture_output=True)
-
-# Wait for any in-flight critical cloud ops before power off
-import api_manager
-api_manager.wait_critical()
-
-# Use systemctl poweroff — goes through polkit (no sudo, no password prompt)
-result = subprocess.run(["systemctl", "poweroff"], capture_output=True, text=True, timeout=10)
-if result.returncode != 0:
-    err = result.stderr.strip() or result.stdout.strip() or "unknown error"
-    print(f"FAILED to power off: {err}")
-    try:
-        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
-        with open(LOG_FILE, "a") as f:
-            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "cmd": "shutdown", "status": "failed", "error": err}) + "\\n")
-    except OSError:
-        pass
-else:
-    print("Powering off...")
-    try:
-        os.makedirs("/dev/shm/pi-bot", exist_ok=True)
-        with open(LOG_FILE, "a") as f:
-            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "cmd": "shutdown", "status": "ok"}) + "\\n")
-    except OSError:
-        pass
-`,
-  },
-  ...profileEntries,
-  {
-    id: "maintenance",
-    filename: "pi-maintenance.sh",
-    path: "/usr/local/bin/pi-maintenance.sh",
-    description: "Daily maintenance — flush logs, AdGuard, audit (Sun), service check. apt update+full-upgrade+autoremove + reboot only on Sun (DOW 7), CPU-throttled to 600 MHz/powersave + nice/ionice + thermal gates between steps. Skipped when .updates_disabled is set via /updates stop, but logs/audit/service-check still run daily.",
-    tags: ["maintenance", "bash", "cron", "thermal", "throttled"],
-    code: `#!/bin/bash
-# Master Maintenance Script — full nightly, CPU-throttled to stay cool
-
-LOG_FILE="/dev/shm/pi-bot/maintenance.log"
-DISK_LOG="/home/alon/secure-pi-bot/logs/maintenance.log"
-QUEUE="/home/alon/scripts/logs/ntfy_queue.txt"
-mkdir -p /home/alon/scripts/logs /home/alon/secure-pi-bot/logs /dev/shm/pi-bot
-
-[ -f /home/alon/secure-pi-bot/.maintenance_disabled ] && {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Maintenance disabled." >> "$LOG_FILE"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Maintenance disabled." >> "$DISK_LOG"
-    exit 0
-}
-
-# log() writes both RAM (realtime) AND disk (survives reboot -> lets /boot
-# tell whether a past maintenance run skipped or issued the reboot).
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$DISK_LOG"; }
-
-# --- Thermal gate (temp in milli-degrees) ---
-TEMP_ZONE="/sys/class/thermal/thermal_zone0/temp"
-COOL_BELOW=55000     # wait until under 55C between steps
-MAX_WAIT_SEC=1800    # cap per-step thermal wait at 30 min
-
-cur_temp() { cat "$TEMP_ZONE" 2>/dev/null || echo 0; }
-
-wait_for_cool() {
-    local waited=0
-    while [ "$waited" -lt "$MAX_WAIT_SEC" ]; do
-        local t=$(cur_temp)
-        [ "$t" -eq 0 ] && return 0
-        [ "$t" -lt "$COOL_BELOW" ] && return 0
-        log "Thermal gate: $((t/1000))C — waiting 30s..."
-        sleep 30
-        waited=$((waited + 30))
-    done
-    log "Thermal gate: max wait reached, proceeding anyway"
-}
-
-# --- CPU throttle: cap ALL cores to 600 MHz / powersave for the whole window.
-# THIS is how heat is kept down — NOT by skipping work. Everything still runs.
-# Reboot at the end resets clocks; profile_scheduler (cron) restores governor.
-throttle_cpu() {
-    touch /dev/shm/pi-bot/.maintenance_throttle
-    python3 /home/alon/secure-pi-bot/scripts/cpu_profile.py throttle
-    log "CPU throttled to 600 MHz / powersave (maintenance marker set)"
-}
-
-# Lowest CPU + idle-IO priority. apt told to keep old conffiles so full-upgrade
-# never blocks on an interactive prompt during the automated run.
-NICE="nice -n 19 ionice -c 3"
-APT_OPTS="-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef -o Acquire::Retries=3"
-
-log "--- MAINTENANCE START (full nightly, throttled) ---"
-echo "--- Pi Report ($(date '+%Y-%m-%d')) ---" > "$QUEUE"
-
-# 0. Throttle CPU + flush RAM logs
-throttle_cpu
-log "Flushing RAM logs..."
-python3 /home/alon/secure-pi-bot/scripts/compress_logs.py >> "$LOG_FILE" 2>&1
-wait_for_cool
-
-# 1. AdGuard
-log "AdGuard upgrade..."
-/opt/AdGuardHome/AdGuardHome -s upgrade >> "$LOG_FILE" 2>&1
-wait_for_cool
-
-UPDATES_LOCK="/home/alon/secure-pi-bot/.updates_disabled"
-UPDATES_DOW="7"   # weekly apt+reboot day (1=Mon..7=Sun)
-
-# 2. OS Updates — full cycle, throttled (only on $UPDATES_DOW; skipped if /updates stop)
-if [ -f "$UPDATES_LOCK" ] || [ "$(date +%u)" != "$UPDATES_DOW" ]; then
-    log "OS Updates: SKIPPED (.updates_disabled set, or not weekly DOW $UPDATES_DOW)"
-    echo "OS Updates: PAUSED (weekly DOW $UPDATES_DOW)" >> "$QUEUE"
-else
-    log "apt update..."
-    $NICE apt-get update -y >> "$LOG_FILE" 2>&1
-    wait_for_cool
-    log "apt full-upgrade (throttled, auto-resolve conffiles)..."
-    $NICE apt-get $APT_OPTS full-upgrade -y >> "$LOG_FILE" 2>&1
-    wait_for_cool
-    log "apt autoremove..."
-    $NICE apt-get $APT_OPTS autoremove -y >> "$LOG_FILE" 2>&1
-    echo "OS Updates: FULL (throttled, weekly DOW $UPDATES_DOW)" >> "$QUEUE"
-
-    mkdir -p /home/alon/.secrets
-    date '+%Y-%m-%d %H:%M:%S' > /home/alon/.secrets/last_upgrade.txt
-    chown alon:alon /home/alon/.secrets/last_upgrade.txt
-fi
-wait_for_cool
-
-# 3. Security Audit — once a week (Sunday), throttled
-if [ "$(date +%u)" = "7" ]; then
-    log "Security audit (weekly Sunday)..."
-    $NICE /usr/local/bin/pi-audit.sh >> "$LOG_FILE" 2>&1
-    echo "Audit: COMPLETED (weekly Sun)" >> "$QUEUE"
-else
-    log "Audit: skipped (weekly — runs Sunday)"
-    echo "Audit: SKIPPED (weekly Sun)" >> "$QUEUE"
-fi
-wait_for_cool
-
-# 4. Service Health
-FAILED=$(systemctl list-units --state=failed --no-legend --plain | grep -v clamav | awk '{print $1}')
-if [[ -n "$FAILED" ]]; then
-    echo "FAILED: $FAILED" >> "$QUEUE"
-    log "CRITICAL: $FAILED"
-else
-    echo "Services: OK" >> "$QUEUE"
-fi
-
-# 5. Sync + Notify
-sync
-/usr/local/bin/ntfy-queue.sh >> "$LOG_FILE" 2>&1
-
-# 6. Reboot — only when updates ran (weekly). Resets CPU clocks; profile_scheduler restores governor within 1 min.
-if [ -f "$UPDATES_LOCK" ] || [ "$(date +%u)" != "$UPDATES_DOW" ]; then
-    log "Reboot: SKIPPED (no updates ran this pass)"
-    echo "Reboot: SKIPPED" >> "$QUEUE"
-else
-    python3 -c "import sys; sys.path.insert(0,'/home/alon/secure-pi-bot/scripts'); import api_manager; api_manager.wait_critical()"
-    log "Issuing scheduled maintenance reboot via systemctl reboot (polkit-authorized; works as alon or root)."
-    # shutdown -r +1 needs root and could silently no-op if cron runs as the user;
-    # systemctl reboot goes through polkit (same path the bot's /restart uses),
-    # so the weekly reboot actually happens instead of being skipped on perms.
-    systemctl reboot >> "$LOG_FILE" 2>&1
-fi
-
-# Release the maintenance throttle marker so the profile scheduler restores
-# the normal profile (on Sun, /dev/shm also clears on reboot — belt+braces).
-rm -f /dev/shm/pi-bot/.maintenance_throttle
-`,
+    code: shutdownPy,
   },
   {
-    id: "pi-audit",
-    filename: "pi-audit.sh",
-    path: "/usr/local/bin/pi-audit.sh",
-    description: "Weekly (Sunday) security audit called by pi-maintenance.sh. Runs ClamAV + Rkhunter under nice/ionice (Lynis disabled for now — re-enable in step 3). NO apt upgrades or reboot (maintenance owns those). Aborts if .maintenance_disabled lock is set. Replaces the legacy pi-audit Go binary.",
-    tags: ["audit", "security", "bash", "maintenance"],
-    code: `#!/bin/bash
-# Security audit — ClamAV + Rkhunter + Lynis, throttled under nice/ionice.
-# Called nightly by pi-maintenance.sh at 03:00 (inherits root — no sudo here).
-# NO OS upgrades or reboots — pi-maintenance.sh owns those.
-# Refuses to run while the maintenance_disabled lock is set.
-
-TS() { date '+%Y-%m-%d %H:%M:%S'; }
-LOCK="/home/alon/secure-pi-bot/.maintenance_disabled"
-QUEUE="/home/alon/scripts/logs/ntfy_queue.txt"
-
-[ -f "$LOCK" ] && { echo "[$(TS)] Audit: maintenance_disabled lock set — abort."; exit 0; }
-
-NICE="nice -n 19 ionice -c 3"
-FOUND=0
-
-echo "[$(TS)] --- AUDIT START ---"
-
-# 1. ClamAV — report infections only, drop LibClamAV warnings
-CLAM=$( { $NICE clamscan -r --infected --quiet /home /var/www /tmp; } 2>&1 | grep -iv 'LibClamAV Warning' )
-if [ -n "$CLAM" ]; then
-  echo "[$(TS)] [!] CRITICAL: VIRUS FOUND"
-  echo "$CLAM"
-  echo "CRITICAL: Virus detected (ClamAV)" >> "$QUEUE"
-  FOUND=1
-fi
-
-# 2. Rkhunter — refresh file property DB, then check for warnings
-rkhunter --propupd >/dev/null 2>&1
-RK=$(rkhunter --check --sk --no-colors 2>/dev/null | grep -i warning | grep -iv 'No warnings')
-if [ -n "$RK" ]; then
-  echo "[$(TS)] [!] CRITICAL: ROOTKIT WARNING"
-  echo "$RK"
-  echo "CRITICAL: Rootkit warning (Rkhunter)" >> "$QUEUE"
-  FOUND=1
-fi
-
-# 3. Lynis — DISABLED for now (re-enable by uncommenting the block below)
-#LY=$(lynis audit system --quick 2>/dev/null | grep -i warning | grep -iv 'pgrep')
-#if [ -n "$LY" ]; then
-#  echo "[$(TS)] [!] CRITICAL: SYSTEM VULNERABILITY"
-#  echo "$LY"
-#  echo "CRITICAL: Vulnerabilities (Lynis)" >> "$QUEUE"
-#  FOUND=1
-#fi
-
-[ "$FOUND" -eq 0 ] && echo "[$(TS)] Audit: clean (ClamAV + Rkhunter; Lynis disabled)"
-`,
+    id: "system-logger",
+    filename: "system_logger.py",
+    path: "~/secure-pi-bot/scripts/system_logger.py",
+    description: "10-min cron logger. Temp to RAM. Warns on 90%+ RAM and disk I/O spikes. Failed services handled by bot.",
+    tags: ["logging", "temperature", "warnings"],
+    code: systemLoggerPy,
   },
-  crontabEntry,
-  lynisSnapshotEntry,
-  apiManagerEntry,
   {
-    id: "outage-drain",
-    filename: "outage_drain.py",
-    path: "~/secure-pi-bot/scripts/outage_drain.py",
-    description: "Every 5 min cron. Replays the SD-card outage buffer: re-appends queued Sheets rows (any worksheet: System Log, Fan Events, Weekly Reports, Lynis Snapshots). Successful items are removed from the buffer; failures stay queued for the next run. Everything goes through Google Sheets now -- service accounts have no Drive storage quota (403).",
-    tags: ["outage", "gsheets", "cron"],
-    code: `import os, sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import api_manager
-
-try:
-    import gspread
-except ImportError as e:
-    print(f"FAILURE: {e} (pip3 install --user gspread)")
-    sys.exit(1)
-
-KEY = "/home/alon/.secrets/gcp_service_account.json"
-SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
-
-if os.getenv("PI_TEST_MODE"):
-    print("[TEST MODE] outage drain skipped -- no replay to Sheets.")
-    sys.exit(0)
-
-# --- Sheets: re-append queued rows to whatever worksheet the payload names ---
-def handle_sheets(item):
-    p = item["payload"]
-    try:
-        api_manager.rate_limit("gsheets")
-        gc = gspread.service_account(filename=KEY)
-        sh = gc.open_by_key(open(SHEET_ID_FILE).read().strip())
-        try:
-            ws = sh.worksheet(p["ws"])
-        except gspread.WorksheetNotFound:
-            # Create the missing worksheet with enough cols for the queued rows.
-            ncols = max(len(r) for r in p["rows"]) if p["rows"] else 6
-            ws = sh.add_worksheet(p["ws"], rows=1, cols=ncols + 2)
-        ws.append_rows(p["rows"], value_input_option="RAW")
-        return True
-    except Exception:
-        return False
-
-drained = api_manager.drain_outage("gsheets", handle_sheets)
-print(f"Drained from outage buffer: {drained} sheets rows.")
-`,
+    id: "fan-logger",
+    filename: "fan_logger.py",
+    path: "~/secure-pi-bot/scripts/fan_logger.py",
+    description: "Logs fan ON/OFF transitions to /dev/shm (RAM). 60s boot delay. No SD writes. Caps at 2000 lines. This Pi's fan is hardwired always-on.",
+    tags: ["fan", "logging", "thermal"],
+    code: fanLoggerPy,
+  },
+  {
+    id: "fan-report",
+    filename: "fan_report.py",
+    path: "~/secure-pi-bot/scripts/fan_report.py",
+    description: "Reads fan event log (RAM + disk) and outputs a plain-text summary for Discord.",
+    tags: ["fan", "report", "discord"],
+    code: fanReportPy,
+  },
+  {
+    id: "compress-logs",
+    filename: "compress_logs.py",
+    path: "~/secure-pi-bot/scripts/compress_logs.py",
+    description: "Called before reboot. Triggers log_sync.py to flush RAM logs to Google Sheets (NO SD writes).",
+    tags: ["logging", "compression", "maintenance"],
+    code: compressLogsPy,
   },
   {
     id: "log-sync",
     filename: "log_sync.py",
     path: "~/secure-pi-bot/scripts/log_sync.py",
-    description: "Syncs RAM logs (system_log + fan_events) to Google Sheets via a GCP service account. Delta-sync by timestamp so RAM rotation is safe. Called every 30 min (cron) and at reboot (compress_logs.py). When the service-account keys are missing, it falls back to SD-card JSONL so logging keeps working until the keys are set up.",
+    description: "Syncs RAM logs (system_log + fan_events) to Google Sheets via a GCP service account. Delta-sync by timestamp. Falls back to SD-card JSONL when keys are missing.",
     tags: ["logging", "gsheets", "sync", "ram"],
-    code: `import os
-import sys
-import json
-
-try:
-    import gspread
-except ImportError:
-    gspread = None
-
-SHM_DIR = "/dev/shm/pi-bot"
-import api_manager
-SYS_LOG = f"{SHM_DIR}/system_log.jsonl"
-FAN_LOG = f"{SHM_DIR}/fan_events.jsonl"
-STATE_FILE = f"{SHM_DIR}/.log_sync_state.json"
-KEY_FILE = "/home/alon/.secrets/gcp_service_account.json"
-SHEET_ID_FILE = "/home/alon/.secrets/gsheets_log_id.txt"
-LOG_DIR = "/home/alon/secure-pi-bot/logs"
-DISK_SYS = f"{LOG_DIR}/system_log.jsonl"
-DISK_FAN = f"{LOG_DIR}/fan_events.jsonl"
-
-os.makedirs(LOG_DIR, exist_ok=True)
-CLOUD_READY = gspread is not None and os.path.exists(KEY_FILE) and os.path.exists(SHEET_ID_FILE)
-sh = SHEET_ID = None
-if CLOUD_READY:
-    try:
-        SHEET_ID = open(SHEET_ID_FILE).read().strip()
-        gc = gspread.service_account(filename=KEY_FILE)
-        sh = gc.open_by_key(SHEET_ID)
-    except Exception:
-        # Auth/network/sheet-not-shared failure: fall back to SD-card JSONL
-        # so this run still flushes RAM logs instead of crashing with no write.
-        CLOUD_READY = False
-        SHEET_ID = None
-
-if bool(os.getenv("PI_TEST_MODE")):
-    def _tc(p):
-        if not os.path.exists(p):
-            return 0
-        n = 0
-        with open(p) as _f:
-            for _ln in _f:
-                if _ln.strip():
-                    n += 1
-        return n
-    _dest = f"sheet {SHEET_ID}" if CLOUD_READY else "SD (keys not configured)"
-    print(f"[TEST MODE] would sync {_tc(SYS_LOG)} system + {_tc(FAN_LOG)} fan rows to {_dest} -- no writes, state unchanged.")
-    sys.exit(0)
-
-def ensure_sheet(title, headers):
-    try:
-        return sh.worksheet(title)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title, rows=1, cols=len(headers))
-        ws.append_row(headers)
-        return ws
-
-def load_state():
-    default = {"last_sys_ts": "", "last_fan_ts": ""}
-    try:
-        with open(STATE_FILE) as f:
-            return {**default, **json.load(f)}
-    except (OSError, json.JSONDecodeError):
-        return default
-
-def save_state(st):
-    with open(STATE_FILE, "w") as f:
-        json.dump(st, f)
-
-def read_lines(path):
-    if not os.path.exists(path):
-        return []
-    with open(path) as f:
-        return [l.strip() for l in f if l.strip()]
-
-# --- System log (delta by timestamp — rotation-safe) ---
-st = load_state()
-sys_ws = ensure_sheet("System Log", ["ts", "temp_c", "ram_pct", "ram_warning", "disk_spike", "spike", "failed"]) if CLOUD_READY else None
-last_sys = st["last_sys_ts"]
-sys_rows = []
-new_max = last_sys
-for line in read_lines(SYS_LOG):
-    try:
-        e = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    ts = e.get("ts") or e.get("ts_start") or ""
-    if ts and (not last_sys or ts > last_sys):
-        sys_rows.append([
-            ts,
-            e.get("temp_c") if e.get("temp_c") is not None else e.get("temp_avg_c", ""),
-            e.get("ram_pct") if e.get("ram_pct") is not None else e.get("ram_avg_pct", ""),
-            "Y" if e.get("ram_warning") else "",
-            "Y" if e.get("disk_spike") else "",
-            "Y" if (e.get("spike") or e.get("spike_flag")) else "",
-            ",".join(e.get("failed", [])),
-        ])
-        if ts > new_max:
-            new_max = ts
-if sys_rows:
-    if CLOUD_READY:
-        api_manager.rate_limit("gsheets")
-        try:
-            with api_manager.critical_op():
-                sys_ws.append_rows(sys_rows, value_input_option="RAW")
-            api_manager.record("gsheets", True)
-        except Exception:
-            api_manager.record("gsheets", False)
-            api_manager.queue_outage("gsheets", "rows", {"ws": "System Log", "rows": sys_rows})
-    else:
-        with open(DISK_SYS, "a") as f:
-            for r in sys_rows:
-                f.write(json.dumps(r) + "\\n")
-st["last_sys_ts"] = new_max
-
-# --- Fan events (delta by timestamp) ---
-fan_ws = ensure_sheet("Fan Events", ["ts", "event", "note"]) if CLOUD_READY else None
-last_fan = st["last_fan_ts"]
-fan_rows = []
-new_max_f = last_fan
-for line in read_lines(FAN_LOG):
-    try:
-        e = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    ts = e.get("ts", "")
-    if ts and (not last_fan or ts > last_fan):
-        fan_rows.append([ts, e.get("event", ""), e.get("note", "")])
-        if ts > new_max_f:
-            new_max_f = ts
-if fan_rows:
-    if CLOUD_READY:
-        api_manager.rate_limit("gsheets")
-        try:
-            with api_manager.critical_op():
-                fan_ws.append_rows(fan_rows, value_input_option="RAW")
-            api_manager.record("gsheets", True)
-        except Exception:
-            api_manager.record("gsheets", False)
-            api_manager.queue_outage("gsheets", "rows", {"ws": "Fan Events", "rows": fan_rows})
-    else:
-        with open(DISK_FAN, "a") as f:
-            for r in fan_rows:
-                f.write(json.dumps(r) + "\\n")
-st["last_fan_ts"] = new_max_f
-
-save_state(st)
-dest = f"sheet {SHEET_ID}" if CLOUD_READY else "SD (keys not yet configured)"
-print(f"Synced {len(sys_rows)} system + {len(fan_rows)} fan rows to {dest}")
-`,
+    code: logSyncPy,
   },
-  setupEntry,
-  systemFixesEntry,
-  ...ledEntries,
-  ...diagEntries,
+  {
+    id: "outage-drain",
+    filename: "outage_drain.py",
+    path: "~/secure-pi-bot/scripts/outage_drain.py",
+    description: "Every 5 min cron. Replays the SD-card outage buffer: re-appends queued Sheets rows to any worksheet. Successful items removed; failures stay queued.",
+    tags: ["outage", "gsheets", "cron"],
+    code: outageDrainPy,
+  },
+  {
+    id: "weekly-report",
+    filename: "weekly_report.py",
+    path: "~/secure-pi-bot/scripts/weekly_report.py",
+    description: "Weekly report (Israel-time keyed, ISO-week idempotent): temp, fan. Posts to Discord + appends a row to the 'Weekly Reports' worksheet. Warns Discord if the Sheet sync fails >1 day.",
+    tags: ["report", "discord", "weekly"],
+    code: weeklyReportPy,
+  },
+  {
+    id: "lynis-report",
+    filename: "lynis_report.py",
+    path: "~/secure-pi-bot/scripts/lynis_report.py",
+    description: "Manual Lynis security audit invoked by /lynis. Surfaces warnings, suggestions, hardening index, and test count from a quick scan.",
+    tags: ["audit", "security", "lynis", "discord"],
+    code: lynisReportPy,
+  },
+  {
+    id: "lynis-snapshot",
+    filename: "lynis_snapshot.py",
+    path: "~/secure-pi-bot/scripts/lynis_snapshot.py",
+    description: "Weekly Lynis snapshot. Score-only change detection; on a change runs AI diff (web search) and appends a row to 'Lynis Snapshots'. Falls back to local SD files when keys are missing.",
+    tags: ["lynis", "audit", "gsheets", "versioning", "ai", "web-search", "score"],
+    code: lynisSnapshotPy,
+  },
+  {
+    id: "ai-debug",
+    filename: "ai_debug.py",
+    path: "~/secure-pi-bot/scripts/ai_debug.py",
+    description: "Token-efficient, context-aware Pi diagnostic assistant (Gemini). MANUAL (/aidebug), AUDIT (--audit, weekly), AUTO-ERROR (thermal/failed-service triggers), AUTO --web (lynis diff). Read-only whitelist only. API key from ~/.secrets/gemini_key.",
+    tags: ["ai", "debug", "gemini", "tool-calling", "minified", "audit"],
+    code: aiDebugPy,
+  },
+  {
+    id: "api-fail-report",
+    filename: "api_fail_report.py",
+    path: "~/secure-pi-bot/scripts/api_fail_report.py",
+    description: "/apifails report: per-provider failure counts + rate and a grand total over the last 7 days.",
+    tags: ["api", "report", "discord", "rate"],
+    code: apiFailReportPy,
+  },
+  {
+    id: "test-all",
+    filename: "test_all.py",
+    path: "~/secure-pi-bot/scripts/test_all.py",
+    description: "Full test harness invoked by /testall. Snapshots state, runs every script with PI_TEST_MODE=1 (skips cloud writes), streams results to #testing, restores state.",
+    tags: ["test", "discord", "harness", "diagnostic", "stateful"],
+    code: testAllPy,
+  },
+  {
+    id: "boot-diag",
+    filename: "boot_diag.py",
+    path: "~/secure-pi-bot/scripts/boot_diag.py",
+    description: "Remote boot/reboot forensics invoked by /boot. Prints last boot, uptime, .updates_disabled state, last upgrade, maintenance log, failed services, boot history, and boot errors.",
+    tags: ["diagnostic", "boot", "reboot", "maintenance", "discord"],
+    code: bootDiagPy,
+  },
+  {
+    id: "params",
+    filename: "params.py",
+    path: "~/secure-pi-bot/scripts/params.py",
+    description: "/parameters (aliases /params, /paramters). Lists the user-facing toggles and their CURRENT state. Read-only.",
+    tags: ["status", "params", "config", "discord", "reference"],
+    code: paramsPy,
+  },
+  {
+    id: "netdiag",
+    filename: "netdiag.py",
+    path: "~/secure-pi-bot/scripts/netdiag.py",
+    description: "Network + SSH + WiFi diagnostics for /diag: ip brief, wifi link + power_save, gateway, pings, listening ports, failed services, ssh journal.",
+    tags: ["network", "diag", "ssh", "wifi"],
+    code: netdiagPy,
+  },
+  {
+    id: "disk-health",
+    filename: "disk_health.py",
+    path: "~/secure-pi-bot/scripts/disk_health.py",
+    description: "SD-card health check for /diskhealth: df, dmesg mmc/I-O/read-only hits, root mount options (flags READ-ONLY), smartctl.",
+    tags: ["disk", "sdcard", "health"],
+    code: diskHealthPy,
+  },
+  {
+    id: "log-tail",
+    filename: "log_tail.py",
+    path: "~/secure-pi-bot/scripts/log_tail.py",
+    description: "Tail any log from Discord for /logs. Searches /dev/shm/pi-bot and ~/secure-pi-bot/logs. '/logs' alone lists available files. Path-traversal protected.",
+    tags: ["logs", "tail", "discord"],
+    code: logTailPy,
+  },
+  {
+    id: "boot-pause",
+    filename: "boot_pause.py",
+    path: "~/secure-pi-bot/scripts/boot_pause.py",
+    description: "/bootpause: back up + remove the crontab and set a .skip_autostart flag so main.py skips monitoring tasks. Bot stays up in minimal mode. Reverses with boot_resume.py.",
+    tags: ["boot", "pause", "autostart", "maintenance", "safe-mode"],
+    code: bootPausePy,
+  },
+  {
+    id: "boot-resume",
+    filename: "boot_resume.py",
+    path: "~/secure-pi-bot/scripts/boot_resume.py",
+    description: "/bootresume: restore the crontab from backup and clear the .skip_autostart flag. Reboot after to start the full lab.",
+    tags: ["boot", "resume", "autostart", "maintenance"],
+    code: bootResumePy,
+  },
+  {
+    id: "led-manager",
+    filename: "led_manager.py",
+    path: "~/secure-pi-bot/scripts/led_manager.py",
+    description: "Persistent LED scheduler (systemd root service). Priority: /leds override > SSH activity > day/night schedule. 'Sleep' = YOUR sleep (dark room), not the Pi sleeping.",
+    tags: ["leds", "sleep", "ssh", "systemd", "daemon"],
+    code: ledManagerPy,
+  },
+  {
+    id: "led-status",
+    filename: "led_status.py",
+    path: "~/secure-pi-bot/scripts/led_status.py",
+    description: "Reads the /leds override mode + actual LED brightness + SSH grace state for /leds status.",
+    tags: ["leds", "status", "discord"],
+    code: ledStatusPy,
+  },
+  {
+    id: "cpu-profile",
+    filename: "cpu_profile.py",
+    path: "~/secure-pi-bot/scripts/cpu_profile.py",
+    description: "The SINGLE sysfs writer for the CPU cpufreq files. Instant-exit when the desired freq already matches. Three intent markers, ONE writer.",
+    tags: ["performance", "cpu", "writer", "shared"],
+    code: cpuProfilePy,
+  },
+  {
+    id: "profile-scheduler",
+    filename: "profile_scheduler.py",
+    path: "~/secure-pi-bot/scripts/profile_scheduler.py",
+    description: "Every-minute cron. One call: cpu_profile.apply(desired_target()). No sysfs read/write here.",
+    tags: ["performance", "scheduler", "cron"],
+    code: profileSchedulerPy,
+  },
+  {
+    id: "set-profile-restricted",
+    filename: "set_profile_restricted.py",
+    path: "~/secure-pi-bot/scripts/set_profile_restricted.py",
+    description: "/setprofile restricted. Sets the manual override marker and applies restricted immediately via the single writer.",
+    tags: ["performance", "thermal", "cpu"],
+    code: setProfileRestrictedPy,
+  },
+  {
+    id: "set-profile-unlimited",
+    filename: "set_profile_unlimited.py",
+    path: "~/secure-pi-bot/scripts/set_profile_unlimited.py",
+    description: "/setprofile unlimited. Clears the manual override marker and applies unlimited immediately.",
+    tags: ["performance", "cpu"],
+    code: setProfileUnlimitedPy,
+  },
+  {
+    id: "profile-status",
+    filename: "profile_status.py",
+    path: "~/secure-pi-bot/scripts/profile_status.py",
+    description: "Reports active CPU profile by reading sysfs directly.",
+    tags: ["performance", "status"],
+    code: profileStatusPy,
+  },
+  {
+    id: "update-bot-status",
+    filename: "update_bot_status.py",
+    path: "~/secure-pi-bot/scripts/update_bot_status.py",
+    description: "Writes bot presence status to /dev/shm (RAM, not SD). main.py reads it every 4 min.",
+    tags: ["discord", "status", "performance"],
+    code: updateBotStatusPy,
+  },
+  {
+    id: "gofile-mirror",
+    filename: "gofile_mirror.py",
+    path: "~/secure-pi-bot/scripts/gofile_mirror.py",
+    description: "Cloud-to-cloud mirror of a HuggingFace model file -> Gofile (anti-censorship backup). Streams via /dev/shm tmpfs, sha256-verified, cross-checked against Gofile md5, then wiped. Resumable HTTP-Range download.",
+    tags: ["gofile", "mirror", "huggingface", "anti-censorship", "integrity", "cloud"],
+    code: gofileMirrorPy,
+  },
+  {
+    id: "gofile-keepalive",
+    filename: "gofile_keepalive.py",
+    path: "~/secure-pi-bot/scripts/gofile_keepalive.py",
+    description: "Keep-alive + integrity re-check for gofile-mirrored models. Streams from Gofile to /dev/null (traffic reset + re-hash) to prevent free-tier inactivity deletion and catch corruption.",
+    tags: ["gofile", "keepalive", "integrity", "cron"],
+    code: gofileKeepalivePy,
+  },
+  {
+    id: "wireguard-setup",
+    filename: "wireguard_setup.py",
+    path: "~/secure-pi-bot/scripts/wireguard_setup.py",
+    description: "One-time WireGuard VPN setup via Docker (wg-easy). Checks docker, enables IPv4 forwarding, writes wireguard/{.env,docker-compose.yml}, opens ufw, runs docker compose up.",
+    tags: ["wireguard", "vpn", "docker", "setup", "install"],
+    code: wireguardSetupPy,
+  },
+  {
+    id: "pi-deploy",
+    filename: "pi_deploy.py",
+    path: "~/secure-pi-bot/scripts/pi_deploy.py",
+    description: "Self-deploy (/sync). Pulls the repo (fetch + reset --hard), mirrors src/lib/pi-bot/{main.py,scripts,modules} into ~/secure-pi-bot runtime paths, installs root files from deploy_manifest.txt (only changed), reboots. One repo, one path.",
+    tags: ["deploy", "github", "sync", "self-update", "reboot", "verify", "root"],
+    code: piDeployPy,
+  },
+  {
+    id: "deploy-info",
+    filename: "deploy_info.py",
+    path: "~/secure-pi-bot/scripts/deploy_info.py",
+    description: "/syncinfo (alias /deployinfo): when the GitHub repo was last updated (local HEAD vs remote) and when /sync last ran (from .deploy_state.json).",
+    tags: ["deploy", "github", "sync", "status", "discord"],
+    code: deployInfoPy,
+  },
+  {
+    id: "maintenance",
+    filename: "pi-maintenance.sh",
+    path: "/usr/local/bin/pi-maintenance.sh",
+    description: "Daily maintenance — flush logs, AdGuard, audit (Sun), service check. apt update+full-upgrade+autoremove + reboot only on Sun, CPU-throttled + thermal gates between steps.",
+    tags: ["maintenance", "bash", "cron", "thermal", "throttled"],
+    code: piMaintenanceSh,
+  },
+  {
+    id: "pi-audit",
+    filename: "pi-audit.sh",
+    path: "/usr/local/bin/pi-audit.sh",
+    description: "Weekly (Sunday) security audit called by pi-maintenance.sh. ClamAV + Rkhunter under nice/ionice. NO apt upgrades or reboot. Aborts if .maintenance_disabled is set.",
+    tags: ["audit", "security", "bash", "maintenance"],
+    code: piAuditSh,
+  },
+  {
+    id: "system-fixes",
+    filename: "pi-system-fixes.sh",
+    path: "/usr/local/bin/pi-system-fixes.sh",
+    description: "One-time Pi system fixes (run with sudo): repairs logrotate/ClamAV logger + enables ssh.service + AdGuardHome.service for auto-start. Idempotent.",
+    tags: ["setup", "fix", "logrotate", "clamav", "services", "sudo"],
+    code: piSystemFixesSh,
+  },
+  {
+    id: "led-ctl",
+    filename: "led_ctl.py",
+    path: "/usr/local/bin/led_ctl",
+    description: "Immediate LED control helper, run as root via sudoers (from /leds on|off|auto). Applies brightness to EVERY /sys/class/leds/* (incl. red PWR) and writes /dev/shm override (RAM -> cleared on reboot).",
+    tags: ["leds", "root", "sudoers", "helper"],
+    code: ledCtlPy,
+  },
+  {
+    id: "pi-deploy-root",
+    filename: "pi_deploy_root.sh",
+    path: "/usr/local/bin/pi_deploy_root",
+    description: "Root installer for /sync (NOPASSWD via sudoers). Copies listed files, validates sudoers fragments before copying, reloads systemd/udev, applies crontab. Backs up existing targets. Does NOT reboot.",
+    tags: ["deploy", "root", "sudoers", "manifest", "bash"],
+    code: piDeployRootSh,
+  },
+  {
+    id: "deploy-manifest",
+    filename: "deploy_manifest.txt",
+    path: "~/secure-pi-bot/src/lib/pi-bot/deploy_manifest.txt",
+    description: "List of files /sync installs OUTSIDE ~/secure-pi-bot (root-owned scripts + crontab). One '<src>\\t<target>' per line. Only files that CHANGED in the pull are reinstalled.",
+    tags: ["deploy", "manifest", "config", "root", "reference"],
+    code: deployManifestTxt,
+  },
+  {
+    id: "crontab",
+    filename: "crontab.txt",
+    path: "~/secure-pi-bot/src/lib/pi-bot/crontab.txt",
+    description: "Full crontab. Applied by /sync (deploy_manifest.txt @crontab) or: crontab <path>.",
+    tags: ["cron", "reference"],
+    code: crontabTxt,
+  },
+  {
+    id: "setup",
+    filename: "setup-notes.txt",
+    path: null,
+    description: "Setup guide (Option A): one-time Pi bootstrap, API key storage, udev/polkit/led rules, Google Sheets, Gofile, crontab, WireGuard.",
+    tags: ["setup", "reference"],
+    code: setupNotesTxt,
+  },
 ];
 
 export default scripts;
