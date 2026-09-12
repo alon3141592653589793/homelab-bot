@@ -48,6 +48,7 @@ import gofileKeepalivePy from "pi-bot:scripts/gofile_keepalive.py";
 import wireguardSetupPy from "pi-bot:scripts/wireguard_setup.py";
 import piDeployPy from "pi-bot:scripts/pi_deploy.py";
 import deployInfoPy from "pi-bot:scripts/deploy_info.py";
+import testReplyPy from "pi-bot:scripts/test_reply.py";
 
 import piMaintenanceSh from "pi-bot:root/pi-maintenance.sh";
 import piAuditSh from "pi-bot:root/pi-audit.sh";
@@ -395,6 +396,14 @@ const scripts = [
     description: "Self-deploy (/sync). Pulls the repo (fetch + reset --hard), mirrors src/lib/pi-bot/{main.py,scripts,modules} into ~/secure-pi-bot runtime paths, installs root files from deploy_manifest.txt (only changed), reboots. One repo, one path.",
     tags: ["deploy", "github", "sync", "self-update", "reboot", "verify", "root"],
     code: piDeployPy,
+  },
+  {
+    id: "test-reply",
+    filename: "test_reply.py",
+    path: "~/secure-pi-bot/scripts/test_reply.py",
+    description: "/test -- pipeline check. Returns the literal 8 so a Discord reply confirms /sync pulled + deployed + ran the latest repo code.",
+    tags: ["test", "deploy", "discord"],
+    code: testReplyPy,
   },
   {
     id: "deploy-info",

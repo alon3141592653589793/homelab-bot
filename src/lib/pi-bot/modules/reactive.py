@@ -15,7 +15,10 @@ async def handle_reactive_command(client, message):
     content = message.content.strip().lower()
     raw = message.content.strip()
 
-    if content == "/status":
+    if content == "/test":
+        await run_script(message, "test_reply.py", "Testing deploy pipeline...")
+
+    elif content == "/status":
         await run_script(message, "status.py", "Querying system status...")
 
     elif content == "/cooldown":
@@ -159,6 +162,7 @@ async def handle_reactive_command(client, message):
         await message.channel.send(
             "Available commands:\n"
             "\n== System & Power ==\n"
+            "/test                 - Pipeline check (returns 8)\n"
             "/status               - Temp/CPU/RAM/IP/uptime\n"
             "/fastfetch            - Pretty system summary\n"
             "/restart (/reboot)    - Reboot Pi (requires confirmation)\n"
