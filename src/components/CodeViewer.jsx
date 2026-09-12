@@ -16,28 +16,76 @@ export default function CodeViewer({ script }) {
 
   const isCrontab = script?.filename === "crontab.txt";
 
-  const handleCmdCopy = useCallback(async () => {
-    let cmd;
+  // Build a complete install command for this file type: saves the repo source
+  // copy (so /sync can reinstall it later) then installs the live copy with the
+  // right perms + post-install reload (visudo / daemon-reload / udev / polkit).
+  const buildInstallCmd = useCallback((script) => {
+    const bytes = new TextEncoder().encode(script.code);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const b64 = btoa(binary);
+    const fn = script.filename;
+    const srcPath = `~/secure-pi-bot/scripts/${fn}`;
+    const live = script.path;
+
+    // crontab.txt -> save source + apply as alon's crontab
     if (isCrontab) {
-      // crontab.txt is applied via `crontab -`, not written to a file
-      cmd = `crontab << 'CRONTAB_EOF'\n${script.code}\nCRONTAB_EOF`;
-    } else {
-      const bytes = new TextEncoder().encode(script.code);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const b64 = btoa(binary);
-      const needsSudo = script.path && (script.path.startsWith('/usr/') || script.path.startsWith('/etc/') || script.path.startsWith('/opt/'));
-      // Use heredoc to avoid single-quote breakage in the base64 payload
-      cmd = needsSudo
-        ? `base64 -d << 'B64EOF' | sudo tee ${script.path} > /dev/null\n${b64}\nB64EOF`
-        : `base64 -d << 'B64EOF' > ${script.path}\n${b64}\nB64EOF`;
+      return [
+        `# 1. save repo source copy (so /sync can re-apply it later)`,
+        `base64 -d << 'B64EOF' > ${srcPath}`,
+        b64,
+        `B64EOF`,
+        `# 2. apply as alon's crontab`,
+        `crontab ${srcPath}`,
+      ].join('\n');
     }
+    if (!live) return null;
+
+    // user-owned files under the repo (python scripts, modules, main.py)
+    const isUserOwned = live.startsWith('~') || live.startsWith('/home/');
+    if (isUserOwned) {
+      return [
+        `base64 -d << 'B64EOF' > ${live}`,
+        b64,
+        `B64EOF`,
+        `chmod 644 ${live}`,
+      ].join('\n');
+    }
+
+    // root-owned: source copy first, then live install + perms + reload
+    const cmds = [
+      `# 1. save repo source copy (so /sync can reinstall it later)`,
+      `base64 -d << 'B64EOF' > ${srcPath}`,
+      b64,
+      `B64EOF`,
+      `# 2. install live root copy`,
+      `base64 -d << 'B64EOF' | sudo tee ${live} > /dev/null`,
+      b64,
+      `B64EOF`,
+    ];
+    if (live.startsWith('/usr/local/bin/')) {
+      cmds.push(`sudo chmod 755 ${live}`);
+    } else if (live.startsWith('/etc/sudoers.d/')) {
+      cmds.push(`sudo chmod 440 ${live}`, `sudo visudo -c`);
+    } else if (live.match(/\/etc\/systemd\/system\/.*\.service$/)) {
+      cmds.push(`sudo chmod 644 ${live}`, `sudo systemctl daemon-reload`);
+    } else if (live.startsWith('/etc/udev/rules.d/')) {
+      cmds.push(`sudo chmod 644 ${live}`, `sudo udevadm control --reload-rules`, `sudo udevadm trigger`);
+    } else if (live.startsWith('/etc/polkit-1/rules.d/')) {
+      cmds.push(`sudo chown root:root ${live}`, `sudo chmod 644 ${live}`, `sudo systemctl restart polkit`);
+    } else {
+      cmds.push(`sudo chmod 644 ${live}`);
+    }
+    return cmds.join('\n');
+  }, [isCrontab]);
+
+  const handleCmdCopy = useCallback(async () => {
+    const cmd = buildInstallCmd(script);
+    if (!cmd) return;
     await navigator.clipboard.writeText(cmd);
     setCmdCopied(true);
     setTimeout(() => setCmdCopied(false), 2000);
-  }, [script, isCrontab]);
+  }, [script, buildInstallCmd]);
 
   if (!script) {
     return (
@@ -75,7 +123,7 @@ export default function CodeViewer({ script }) {
           {(script.path || isCrontab) && (
             <button
               onClick={handleCmdCopy}
-              title={isCrontab ? "Copy crontab apply command (crontab heredoc)" : "Copy shell override command (base64 heredoc)"}
+              title={isCrontab ? "Copy: save source + apply as alon's crontab" : "Copy full install command (source copy + live install + perms + reload)"}
               className={cn(
                 "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-mono transition-all",
                 "border border-[#30363d]",
