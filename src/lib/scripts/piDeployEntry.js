@@ -64,8 +64,13 @@ def read_cfg(path, default=None):
 
 
 def git(args, check=True):
+    # Never prompt interactively -- if auth is needed, fail fast (the bot
+    # runs /sync with no tty, so a prompt would hang forever).
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
     return subprocess.run(["git", "-C", DEPLOY_DIR] + args, check=check,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=env)
 
 
 def resolve_ref():
@@ -130,7 +135,17 @@ def main():
     mode = "dry-run" if dry_run else ("pull (no-reboot)" if no_reboot else "pull + reboot")
     write_state({"last_run": datetime.now().isoformat(timespec="seconds"), "last_run_mode": mode})
 
-    git(["fetch", "--force", "origin"])
+    try:
+        git(["fetch", "--force", "origin"])
+    except subprocess.CalledProcessError as e:
+        print("FAILURE: git fetch failed (auth or network).")
+        print("  " + (e.stderr or "").strip())
+        print("If the repo is PRIVATE, embed a PAT (no prompts at runtime):")
+        print("  echo 'https://<YOUR_PAT>@github.com/you/secure-pi-bot.git' > ~/secure-pi-bot/.deploy_repo")
+        print("  chmod 600 ~/secure-pi-bot/.deploy_repo")
+        print("  git -C ~/secure-pi-bot remote set-url origin $(cat ~/secure-pi-bot/.deploy_repo)")
+        print("Create a PAT at: https://github.com/settings/tokens (classic, 'repo' scope).")
+        sys.exit(1)
     git(["remote", "set-head", "origin", "-a"], check=False)
     ref = resolve_ref()
 
