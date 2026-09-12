@@ -1,62 +1,63 @@
 // Source of truth = the real .py/.sh/.txt files under src/lib/pi-bot/.
-// Each script's code is imported verbatim via Vite's ?raw suffix (the file
-// content as a string), so the dashboard shows exactly what /sync deploys.
+// Each script's code is read from the real file at build time via the
+// "pi-bot:<path>" virtual module (see piBotRaw() in vite.config.js), so the
+// dashboard shows exactly what /sync deploys.
 // Edit the real file under src/lib/pi-bot/, commit, push, /sync.
 
-import mainPy from "@/lib/pi-bot/main.py?raw";
-import reactivePy from "@/lib/pi-bot/modules/reactive.py?raw";
-import runnerPy from "@/lib/pi-bot/modules/runner.py?raw";
-import adguardPy from "@/lib/pi-bot/modules/adguard.py?raw";
-import vpnPy from "@/lib/pi-bot/modules/vpn.py?raw";
+import mainPy from "pi-bot:main.py";
+import reactivePy from "pi-bot:modules/reactive.py";
+import runnerPy from "pi-bot:modules/runner.py";
+import adguardPy from "pi-bot:modules/adguard.py";
+import vpnPy from "pi-bot:modules/vpn.py";
 
-import constantsPy from "@/lib/pi-bot/scripts/constants.py?raw";
-import apiManagerPy from "@/lib/pi-bot/scripts/api_manager.py?raw";
-import statusPy from "@/lib/pi-bot/scripts/status.py?raw";
-import cooldownPy from "@/lib/pi-bot/scripts/cooldown.py?raw";
-import restartPy from "@/lib/pi-bot/scripts/restart.py?raw";
-import shutdownPy from "@/lib/pi-bot/scripts/shutdown.py?raw";
-import systemLoggerPy from "@/lib/pi-bot/scripts/system_logger.py?raw";
-import fanLoggerPy from "@/lib/pi-bot/scripts/fan_logger.py?raw";
-import fanReportPy from "@/lib/pi-bot/scripts/fan_report.py?raw";
-import compressLogsPy from "@/lib/pi-bot/scripts/compress_logs.py?raw";
-import logSyncPy from "@/lib/pi-bot/scripts/log_sync.py?raw";
-import outageDrainPy from "@/lib/pi-bot/scripts/outage_drain.py?raw";
-import weeklyReportPy from "@/lib/pi-bot/scripts/weekly_report.py?raw";
-import lynisReportPy from "@/lib/pi-bot/scripts/lynis_report.py?raw";
-import lynisSnapshotPy from "@/lib/pi-bot/scripts/lynis_snapshot.py?raw";
-import aiDebugPy from "@/lib/pi-bot/scripts/ai_debug.py?raw";
-import apiFailReportPy from "@/lib/pi-bot/scripts/api_fail_report.py?raw";
-import testAllPy from "@/lib/pi-bot/scripts/test_all.py?raw";
-import bootDiagPy from "@/lib/pi-bot/scripts/boot_diag.py?raw";
-import paramsPy from "@/lib/pi-bot/scripts/params.py?raw";
-import netdiagPy from "@/lib/pi-bot/scripts/netdiag.py?raw";
-import diskHealthPy from "@/lib/pi-bot/scripts/disk_health.py?raw";
-import logTailPy from "@/lib/pi-bot/scripts/log_tail.py?raw";
-import bootPausePy from "@/lib/pi-bot/scripts/boot_pause.py?raw";
-import bootResumePy from "@/lib/pi-bot/scripts/boot_resume.py?raw";
-import ledManagerPy from "@/lib/pi-bot/scripts/led_manager.py?raw";
-import ledStatusPy from "@/lib/pi-bot/scripts/led_status.py?raw";
-import cpuProfilePy from "@/lib/pi-bot/scripts/cpu_profile.py?raw";
-import profileSchedulerPy from "@/lib/pi-bot/scripts/profile_scheduler.py?raw";
-import setProfileRestrictedPy from "@/lib/pi-bot/scripts/set_profile_restricted.py?raw";
-import setProfileUnlimitedPy from "@/lib/pi-bot/scripts/set_profile_unlimited.py?raw";
-import profileStatusPy from "@/lib/pi-bot/scripts/profile_status.py?raw";
-import updateBotStatusPy from "@/lib/pi-bot/scripts/update_bot_status.py?raw";
-import gofileMirrorPy from "@/lib/pi-bot/scripts/gofile_mirror.py?raw";
-import gofileKeepalivePy from "@/lib/pi-bot/scripts/gofile_keepalive.py?raw";
-import wireguardSetupPy from "@/lib/pi-bot/scripts/wireguard_setup.py?raw";
-import piDeployPy from "@/lib/pi-bot/scripts/pi_deploy.py?raw";
-import deployInfoPy from "@/lib/pi-bot/scripts/deploy_info.py?raw";
+import constantsPy from "pi-bot:scripts/constants.py";
+import apiManagerPy from "pi-bot:scripts/api_manager.py";
+import statusPy from "pi-bot:scripts/status.py";
+import cooldownPy from "pi-bot:scripts/cooldown.py";
+import restartPy from "pi-bot:scripts/restart.py";
+import shutdownPy from "pi-bot:scripts/shutdown.py";
+import systemLoggerPy from "pi-bot:scripts/system_logger.py";
+import fanLoggerPy from "pi-bot:scripts/fan_logger.py";
+import fanReportPy from "pi-bot:scripts/fan_report.py";
+import compressLogsPy from "pi-bot:scripts/compress_logs.py";
+import logSyncPy from "pi-bot:scripts/log_sync.py";
+import outageDrainPy from "pi-bot:scripts/outage_drain.py";
+import weeklyReportPy from "pi-bot:scripts/weekly_report.py";
+import lynisReportPy from "pi-bot:scripts/lynis_report.py";
+import lynisSnapshotPy from "pi-bot:scripts/lynis_snapshot.py";
+import aiDebugPy from "pi-bot:scripts/ai_debug.py";
+import apiFailReportPy from "pi-bot:scripts/api_fail_report.py";
+import testAllPy from "pi-bot:scripts/test_all.py";
+import bootDiagPy from "pi-bot:scripts/boot_diag.py";
+import paramsPy from "pi-bot:scripts/params.py";
+import netdiagPy from "pi-bot:scripts/netdiag.py";
+import diskHealthPy from "pi-bot:scripts/disk_health.py";
+import logTailPy from "pi-bot:scripts/log_tail.py";
+import bootPausePy from "pi-bot:scripts/boot_pause.py";
+import bootResumePy from "pi-bot:scripts/boot_resume.py";
+import ledManagerPy from "pi-bot:scripts/led_manager.py";
+import ledStatusPy from "pi-bot:scripts/led_status.py";
+import cpuProfilePy from "pi-bot:scripts/cpu_profile.py";
+import profileSchedulerPy from "pi-bot:scripts/profile_scheduler.py";
+import setProfileRestrictedPy from "pi-bot:scripts/set_profile_restricted.py";
+import setProfileUnlimitedPy from "pi-bot:scripts/set_profile_unlimited.py";
+import profileStatusPy from "pi-bot:scripts/profile_status.py";
+import updateBotStatusPy from "pi-bot:scripts/update_bot_status.py";
+import gofileMirrorPy from "pi-bot:scripts/gofile_mirror.py";
+import gofileKeepalivePy from "pi-bot:scripts/gofile_keepalive.py";
+import wireguardSetupPy from "pi-bot:scripts/wireguard_setup.py";
+import piDeployPy from "pi-bot:scripts/pi_deploy.py";
+import deployInfoPy from "pi-bot:scripts/deploy_info.py";
 
-import piMaintenanceSh from "@/lib/pi-bot/root/pi-maintenance.sh?raw";
-import piAuditSh from "@/lib/pi-bot/root/pi-audit.sh?raw";
-import piSystemFixesSh from "@/lib/pi-bot/root/pi-system-fixes.sh?raw";
-import ledCtlPy from "@/lib/pi-bot/root/led_ctl.py?raw";
-import piDeployRootSh from "@/lib/pi-bot/root/pi_deploy_root.sh?raw";
+import piMaintenanceSh from "pi-bot:root/pi-maintenance.sh";
+import piAuditSh from "pi-bot:root/pi-audit.sh";
+import piSystemFixesSh from "pi-bot:root/pi-system-fixes.sh";
+import ledCtlPy from "pi-bot:root/led_ctl.py";
+import piDeployRootSh from "pi-bot:root/pi_deploy_root.sh";
 
-import crontabTxt from "@/lib/pi-bot/crontab.txt?raw";
-import deployManifestTxt from "@/lib/pi-bot/deploy_manifest.txt?raw";
-import setupNotesTxt from "@/lib/pi-bot/setup-notes.txt?raw";
+import crontabTxt from "pi-bot:crontab.txt";
+import deployManifestTxt from "pi-bot:deploy_manifest.txt";
+import setupNotesTxt from "pi-bot:setup-notes.txt";
 
 const scripts = [
   {
