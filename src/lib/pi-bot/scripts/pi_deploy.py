@@ -100,6 +100,55 @@ def mirror_tree(src_dir, dst_dir):
             shutil.copy2(s, d)
 
 
+def _rel_set(src_dir, exts=(".py", ".sh")):
+    """Relative paths of tracked-script files under src_dir."""
+    out = set()
+    if not os.path.isdir(src_dir):
+        return out
+    for root, _, files in os.walk(src_dir):
+        if "__pycache__" in root:
+            continue
+        for fn in files:
+            if fn.endswith(exts):
+                p = os.path.join(root, fn)
+                out.add(os.path.relpath(p, src_dir))
+    return out
+
+
+def prune_tree(src_dir, dst_dir):
+    """Remove .py/.sh files in dst_dir that no longer exist in src_dir.
+    Only touches script files (never logs, __pycache__, .env, etc.).
+    Returns a sorted list of removed relative paths."""
+    removed = []
+    expected = _rel_set(src_dir)
+    if not os.path.isdir(dst_dir):
+        return removed
+    for root, _, files in os.walk(dst_dir):
+        if "__pycache__" in root:
+            continue
+        for fn in files:
+            if not fn.endswith((".py", ".sh")):
+                continue
+            p = os.path.join(root, fn)
+            rel = os.path.relpath(p, dst_dir)
+            if rel not in expected:
+                try:
+                    os.remove(p)
+                    removed.append(rel)
+                except OSError:
+                    pass
+    # sweep up directories that are now empty (bottom-up), but never dst_dir itself
+    for root, dirs, files in os.walk(dst_dir, topdown=False):
+        if root == dst_dir or "__pycache__" in root:
+            continue
+        if not dirs and not files:
+            try:
+                os.rmdir(root)
+            except OSError:
+                pass
+    return sorted(removed)
+
+
 def load_manifest():
     items = []
     if not os.path.exists(MANIFEST):
@@ -173,6 +222,9 @@ def main():
             if not os.path.exists(d):
                 os.makedirs(d)
             mirror_tree(s, d)
+            rm = prune_tree(s, d)
+            for rel in rm:
+                print("  - " + os.path.join(dst_rel, rel) + "  (removed)")
         elif os.path.isfile(s):
             shutil.copy2(s, d)
     print("Mirrored main.py, scripts/, modules/.")
