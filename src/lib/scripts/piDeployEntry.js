@@ -2,12 +2,13 @@ const entry = {
   id: "pi-deploy",
   filename: "pi_deploy.py",
   path: "~/secure-pi-bot/scripts/pi_deploy.py",
-  description: "Self-deploy (simple): pull the existing secure-pi-bot repo directly into ~/secure-pi-bot and reboot so the bot reloads the new code. One repo, one path -- just a git fetch + reset --hard to origin/<branch>. Root-owned files (/etc/..., /usr/local/bin/...) are NOT touched by /sync (change those by hand). .env and other untracked files are never deleted (git reset --hard only touches tracked files; aborts if .env is tracked to protect secrets). Triggered by Discord /sync (or /sync no-reboot / /sync dry-run). Records last-run state for /syncinfo.",
-  tags: ["deploy", "github", "sync", "self-update", "reboot"],
+  description: "Self-deploy (simple): pull the existing secure-pi-bot repo directly into ~/secure-pi-bot, VERIFY every change by sha256 hash, report old->new hash for each updated file, then reboot so the bot reloads the new code. One repo, one path -- just a git fetch + reset --hard to origin/<branch>. Root-owned files (/etc/..., /usr/local/bin/...) are NOT touched by /sync (change those by hand). .env and other untracked files are never deleted (git reset --hard only touches tracked files; aborts if .env is tracked to protect secrets). Triggered by Discord /sync (or /sync no-reboot / /sync dry-run). Records last-run state for /syncinfo.",
+  tags: ["deploy", "github", "sync", "self-update", "reboot", "verify"],
   code: `#!/usr/bin/env python3
 """
 Self-deploy (simple): pull the existing secure-pi-bot repo directly into
-~/secure-pi-bot and reboot so the bot reloads the new code.
+~/secure-pi-bot, verify every change by sha256 hash, report old->new hash
+for each updated file, then reboot so the bot reloads the new code.
 
 One repo, one path -- this is just a git pull of your existing project repo.
 Root-owned files (/etc/..., /usr/local/bin/...) are NOT touched by /sync;
@@ -19,13 +20,14 @@ Config (one line each):
   ~/secure-pi-bot/.deploy_branch  -> branch (optional; default = repo default)
 
 Usage:
-  python3 pi_deploy.py               # pull, REBOOT
-  python3 pi_deploy.py --no-reboot   # pull, no reboot
+  python3 pi_deploy.py               # pull, verify, REBOOT
+  python3 pi_deploy.py --no-reboot   # pull, verify, no reboot
   python3 pi_deploy.py --dry-run     # fetch + show what would change, no write
 """
 import os
 import sys
 import json
+import hashlib
 import subprocess
 from datetime import datetime
 
@@ -71,6 +73,15 @@ def resolve_ref():
     return "origin/main"
 
 
+def fhash(rel):
+    p = os.path.join(DEPLOY_DIR, rel)
+    try:
+        with open(p, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:12]
+    except OSError:
+        return "(missing)"
+
+
 def main():
     no_reboot = "--no-reboot" in sys.argv
     dry_run = "--dry-run" in sys.argv
@@ -103,18 +114,45 @@ def main():
     git(["remote", "set-head", "origin", "-a"], check=False)
     ref = resolve_ref()
 
+    # Capture which tracked files differ between current HEAD and the remote ref.
+    diff = git(["diff", "--name-only", "HEAD.." + ref], check=False)
+    changed = [ln for ln in diff.stdout.splitlines() if ln.strip()]
+
     if dry_run:
         print("[DRY-RUN] new commits since last sync:")
         r = git(["log", "--oneline", "HEAD.." + ref], check=False)
         print(r.stdout.strip() or "(none -- already up to date)")
-        print("[DRY-RUN] files that would change:")
-        r = git(["diff", "--stat", "HEAD.." + ref], check=False)
-        print(r.stdout.strip() or "(none)")
+        if changed:
+            print("[DRY-RUN] files that would change (" + str(len(changed)) + "):")
+            for rel in changed:
+                print("  - " + rel + "  (current hash: " + fhash(rel) + ")")
+        else:
+            print("[DRY-RUN] no tracked files would change.")
         print("[DRY-RUN] nothing written.")
         return
 
+    # Snapshot current hashes of the files that will change, THEN apply.
+    old_hashes = {rel: fhash(rel) for rel in changed}
+
     git(["reset", "--hard", ref])
     print("Updated " + DEPLOY_DIR + " to " + ref)
+
+    # Verify: report old -> new hash for every file that was supposed to change.
+    if changed:
+        print("Hash verification (" + str(len(changed)) + " file(s) diff vs HEAD):")
+        actually = 0
+        for rel in changed:
+            oh = old_hashes[rel]
+            nh = fhash(rel)
+            if oh == nh:
+                print("  = " + rel + "  " + oh + " (no change)")
+            else:
+                print("  + " + rel + "  " + oh + " -> " + nh)
+                actually += 1
+        print(str(actually) + "/" + str(len(changed)) + " files actually changed on disk.")
+    else:
+        print("No tracked files changed (already up to date).")
+
     write_state({"last_apply": datetime.now().isoformat(timespec="seconds"), "last_apply_ok": True})
 
     if no_reboot:
