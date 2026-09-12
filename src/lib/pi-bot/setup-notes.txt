@@ -87,7 +87,7 @@ touch /home/alon/secure-pi-bot/.logging_enabled
 # ============================================================
 # PYTHON DEPENDENCIES
 # ============================================================
-pip3 install --user requests psutil python-dotenv gspread
+pip3 install --user --break-system-packages requests psutil python-dotenv gspread discord.py
 
 # ============================================================
 # GOOGLE SHEETS — the ONLY cloud destination for logs + reports
