@@ -1,6 +1,9 @@
 # Pi Crontab -- alon
 # Applied by /sync (deploy_manifest.txt @crontab entry) or: crontab <path>
 
+# Auto-start the bot on boot (so /sync reboots bring it back up)
+@reboot cd /home/alon/secure-pi-bot && python3 main.py >> /dev/shm/pi-bot/main.log 2>&1
+
 # CPU profile auto-switcher (instant exit if no change needed)
 * * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
 
