@@ -89,41 +89,48 @@ sudo visudo -c   # syntax check -- a bad sudoers line can lock you out
 #   systemctl daemon-reload && systemctl enable --now pi-leds
 
 # ============================================================
-# SELF-DEPLOY (GitHub -> Pi): pull, overwrite every script + config, reboot
+# SELF-DEPLOY (GitHub -> Pi): simple git pull of the existing repo, then reboot
 # ============================================================
-# pi_deploy.py + pi_deploy_root.sh let the Pi overwrite ALL of its own scripts
-# and config files from a GitHub repo, then reboot -- triggered by Discord
-# /sync (or /sync no-reboot). Repo layout == filesystem layout:
-#   home/alon/secure-pi-bot/... -> /home/alon/secure-pi-bot/...  (alon)
-#   usr/local/bin/...           -> /usr/local/bin/...           (root)
-#   etc/systemd/system/...      -> /etc/systemd/system/...        (root)
-#   etc/sudoers.d/...            -> /etc/sudoers.d/...           (root)
-#   etc/polkit-1/rules.d/...    -> /etc/polkit-1/rules.d/...     (root)
-#   etc/udev/rules.d/...        -> /etc/udev/rules.d/...         (root)
-#   crontab.txt                 -> alon's crontab                (root)
+# /sync just pulls your existing secure-pi-bot repo into ~/secure-pi-bot and
+# reboots so the bot reloads the new code. One repo, one path -- no separate
+# pi-deploy repo, no filesystem-mirror layout. Root-owned files
+# (/etc/..., /usr/local/bin/...) are NOT touched by /sync; change those by hand.
+# .env and other untracked files are never deleted (git reset --hard only
+# touches tracked files; pi_deploy.py aborts if .env is tracked).
 #
-# One-time bootstrap (the deploy can't install its own root helper without root):
-sudo cp /home/alon/secure-pi-bot/scripts/pi_deploy_root.sh /usr/local/bin/pi_deploy_root
-sudo chmod 755 /usr/local/bin/pi_deploy_root
-echo "alon ALL=(root) NOPASSWD: /usr/local/bin/pi_deploy_root" | sudo tee /etc/sudoers.d/pi-deploy
-sudo chmod 440 /etc/sudoers.d/pi-deploy
-sudo visudo -c
+# One-time: turn the live dir into your repo + push the current Pi state:
+cd ~/secure-pi-bot
+git init 2>/dev/null || true
+grep -qxF '.env' .gitignore 2>/dev/null || echo '.env' >> .gitignore
+git add -A && git commit -m "initial Pi state"
+git branch -M main
+git remote add origin https://github.com/YOU/secure-pi-bot.git 2>/dev/null || git remote set-url origin https://github.com/YOU/secure-pi-bot.git
+git push -u origin main
 #
-# Point it at your repo (HTTPS; for private repos use a deploy key / token URL):
-echo 'https://github.com/YOU/pi-deploy.git' > /home/alon/secure-pi-bot/.deploy_repo
-echo '/home/alon/pi-deploy'                > /home/alon/secure-pi-bot/.deploy_dir
-chmod 600 /home/alon/secure-pi-bot/.deploy_repo /home/alon/secure-pi-bot/.deploy_dir
+# Point /sync at that repo:
+echo 'https://github.com/YOU/secure-pi-bot.git' > ~/secure-pi-bot/.deploy_repo
+chmod 600 ~/secure-pi-bot/.deploy_repo
+# (optional) pin a branch other than the repo default:
+# echo 'main' > ~/secure-pi-bot/.deploy_branch
 #
-# Then from Discord:
-#   /sync            (pulls, applies everything, reboots)
-#   /sync no-reboot  (pulls, applies, no reboot)
+# First test (by hand over SSH -- the Pi's reactive.py predates /sync):
+#   python3 ~/secure-pi-bot/scripts/pi_deploy.py --dry-run     # show what would change
+#   python3 ~/secure-pi-bot/scripts/pi_deploy.py --no-reboot  # pull, stay up
+#   python3 ~/secure-pi-bot/scripts/pi_deploy.py              # pull + reboot
+# After the reboot the new reactive.py is live -> /sync works from Discord:
+#   /sync            (pulls, reboots)
+#   /sync no-reboot  (pulls, no reboot)
+#   /sync dry-run    (fetch + list what would change, no write)
+#   /syncinfo        (when the repo was last updated + last /sync)
 #
 # NOTES:
-#   - git reset --hard is used -> local edits on the Pi are OVERWRITTEN. The
-#     repo is the source of truth.
-#   - Inbound webhooks aren't possible behind NAT. If you want push-triggered
-#     deploys, call /sync from a GitHub Action, or add a cron line
-#     'pi_deploy.py --no-reboot' for hands-free config-only sync.
+#   - git reset --hard is used -> local edits to TRACKED files on the Pi are
+#     OVERWRITTEN. Keep changes in the repo, not on the Pi.
+#   - Root-owned files (sudoers/polkit/udev/systemd/crontab) are NOT synced.
+#     Apply those by hand with pi_deploy_root.sh when you change them.
+#   - Inbound webhooks aren't possible behind NAT. For push-triggered deploys,
+#     call /sync from a GitHub Action, or add a cron line
+#     'pi_deploy.py --no-reboot' for hands-free pulls.
 
 # ============================================================
 # DIRECTORIES + LOGGING ENABLE

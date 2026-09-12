@@ -346,11 +346,11 @@ async def handle_reactive_command(client, message):
 
     elif content in ("/sync", "/sync no-reboot", "/sync config", "/sync dry-run"):
         if content == "/sync":
-            await run_script(message, "pi_deploy.py", "Pulling from GitHub + applying all scripts/configs, then rebooting...", timeout=300)
+            await run_script(message, "pi_deploy.py", "Pulling latest from the secure-pi-bot repo, then rebooting...", timeout=300)
         elif content == "/sync dry-run":
-            await run_script(message, "pi_deploy.py", "Dry-run: pulling + listing what would change (no write, no reboot)...", args=["--dry-run"], timeout=120)
+            await run_script(message, "pi_deploy.py", "Dry-run: fetching + listing what would change (no write, no reboot)...", args=["--dry-run"], timeout=120)
         else:
-            await run_script(message, "pi_deploy.py", "Pulling + applying configs (no reboot)...", args=["--no-reboot"], timeout=300)
+            await run_script(message, "pi_deploy.py", "Pulling latest from the repo (no reboot)...", args=["--no-reboot"], timeout=300)
 
     elif content in ("/syncinfo", "/deployinfo"):
         await run_script(message, "deploy_info.py", "Checking deploy status...", timeout=30)
@@ -423,9 +423,9 @@ async def handle_reactive_command(client, message):
             "\\n== Advanced ==\\n"
             "/aidebug <question>   - Conversational AI diagnostic (optional: model prefix)\\n"
             "/testall              - Run full test suite (posts to #testing)\\n"
-            "/sync                 - Pull all scripts+configs from GitHub, apply, reboot\\n"
+            "/sync                 - Pull latest from the secure-pi-bot repo, reboot\\n"
             "/sync no-reboot       - Same, but skip the reboot\\n"
-            "/sync dry-run         - Pull + list what would change (no write, no reboot)\\n"
+            "/sync dry-run         - Fetch + list what would change (no write, no reboot)\\n"
             "/syncinfo             - When GitHub repo was last updated + when /sync last ran\\n"
             "\\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\\n"
             "/help                 - This message"
