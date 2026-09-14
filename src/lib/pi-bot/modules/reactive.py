@@ -18,6 +18,9 @@ async def handle_reactive_command(client, message):
     if content == "/test":
         await run_script(message, "test_reply.py", "Testing deploy pipeline...")
 
+    elif content == "/nmap":
+        await run_script(message, "net_scan.py", "Scanning the local WiFi network (this can take a minute)...", timeout=180)
+
     elif content == "/status":
         await run_script(message, "status.py", "Querying system status...")
 
@@ -163,6 +166,7 @@ async def handle_reactive_command(client, message):
             "Available commands:\n"
             "\n== System & Power ==\n"
             "/test                 - Pipeline check (returns 8)\n"
+            "/nmap                 - Scan the whole WiFi network (host discovery)\n"
             "/status               - Temp/CPU/RAM/IP/uptime\n"
             "/fastfetch            - Pretty system summary\n"
             "/restart (/reboot)    - Reboot Pi (requires confirmation)\n"

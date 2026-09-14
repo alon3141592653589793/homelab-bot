@@ -34,6 +34,11 @@
 # Weekly AI system audit (all info minified; Lynis in a separate pass)
 0 5 * * 0 python3 /home/alon/secure-pi-bot/scripts/ai_debug.py --audit
 
+# Auto network scan every 50h (stealthy host discovery). Runs hourly but the
+# script self-gates so it only scans when 50h elapsed since the last scan.
+# Reports NEW hosts (not seen in the last 5 scans) to Discord + logs every scan.
+7 * * * * python3 /home/alon/secure-pi-bot/scripts/net_scan_auto.py >> /dev/shm/pi-bot/net_scan_auto.log 2>&1
+
 # Gofile mirror keep-alive + integrity re-check -- UNCOMMENT only after you
 # confirm gofile_keepalive.py can resolve a real download on your account.
 # 17 */6 * * * python3 /home/alon/secure-pi-bot/scripts/gofile_keepalive.py >> /dev/shm/pi-bot/gofile_keepalive.log 2>&1

@@ -49,6 +49,8 @@ import wireguardSetupPy from "pi-bot:scripts/wireguard_setup.py";
 import piDeployPy from "pi-bot:scripts/pi_deploy.py";
 import deployInfoPy from "pi-bot:scripts/deploy_info.py";
 import testReplyPy from "pi-bot:scripts/test_reply.py";
+import netScanPy from "pi-bot:scripts/net_scan.py";
+import netScanAutoPy from "pi-bot:scripts/net_scan_auto.py";
 
 import piMaintenanceSh from "pi-bot:root/pi-maintenance.sh";
 import piAuditSh from "pi-bot:root/pi-audit.sh";
@@ -404,6 +406,22 @@ const scripts = [
     description: "/test -- pipeline check. Returns the literal 8 so a Discord reply confirms /sync pulled + deployed + ran the latest repo code.",
     tags: ["test", "deploy", "discord"],
     code: testReplyPy,
+  },
+  {
+    id: "net-scan",
+    filename: "net_scan.py",
+    path: "~/secure-pi-bot/scripts/net_scan.py",
+    description: "/nmap -- scan the whole local WiFi network (host discovery, -sn). Detects subnet from the default route, lists live hosts with IP/hostname/MAC/vendor. Uses sudo nmap for ARP; falls back to plain nmap.",
+    tags: ["nmap", "network", "scan", "discord"],
+    code: netScanPy,
+  },
+  {
+    id: "net-scan-auto",
+    filename: "net_scan_auto.py",
+    path: "~/secure-pi-bot/scripts/net_scan_auto.py",
+    description: "Auto stealthy network scan every 50h (cron hourly, self-gated). Polite -T2 host discovery. Saves every scan to logs/net_scans/. Reports NEW hosts not seen in the last 5 scans to Discord.",
+    tags: ["nmap", "network", "scan", "cron", "stealth", "discord"],
+    code: netScanAutoPy,
   },
   {
     id: "deploy-info",

@@ -129,6 +129,25 @@ chmod 600 /home/alon/.secrets/gofile_token
 # ============================================================
 
 # ============================================================
+# NMAP -- network scanning (/nmap + auto 50h scan)
+# ============================================================
+# Install nmap once:
+sudo apt update && sudo apt install -y nmap
+
+# Host discovery (-sn) gives IP/hostname. For MAC + vendor it needs ARP,
+# which needs root. Add a sudoers entry so the bot can run nmap as root
+# WITHOUT a password (used by net_scan.py and net_scan_auto.py):
+echo "alon ALL=(root) NOPASSWD: /usr/bin/nmap" | sudo tee /etc/sudoers.d/pi-nmap
+sudo visudo -c
+#    (verify the path: `which nmap` -- on Debian it's /usr/bin/nmap)
+
+# Optional: a dedicated Discord channel for auto-scan new-device alerts.
+# If unset, alerts fall back to REPORT_CHANNEL_ID. Add to .env:
+#   NETSCAN_CHANNEL_ID=<discord channel id>
+# Scans are saved to ~/secure-pi-bot/logs/net_scans/net_scans.jsonl (JSONL),
+# and the last-5-scan state lives in ~/secure-pi-bot/.net_scan_state.json.
+
+# ============================================================
 # WIREGUARD VPN (Docker: wg-easy) -- one-time setup
 # ============================================================
 #   python3 ~/secure-pi-bot/scripts/wireguard_setup.py \
