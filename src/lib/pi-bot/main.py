@@ -176,6 +176,20 @@ async def on_ready():
     if not sync_bot_presence.is_running():
         sync_bot_presence.start()
 
+    # If a manual command rebooted the Pi, announce that scripts have loaded.
+    notify_flag = "/home/alon/secure-pi-bot/.reboot_notify"
+    if os.path.exists(notify_flag):
+        try:
+            os.remove(notify_flag)
+        except OSError:
+            pass
+        ch = client.get_channel(COMMAND_CHANNEL_ID)
+        if ch:
+            try:
+                await ch.send("✅ Pi back online — scripts loaded.")
+            except Exception:
+                pass
+
 @client.event
 async def on_message(message):
     if message.author.id == client.user.id:

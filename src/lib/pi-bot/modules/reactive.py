@@ -162,7 +162,7 @@ async def handle_reactive_command(client, message):
         await run_script(message, "log_tail.py", "", args=raw.split()[1:], timeout=15)
 
     elif content == "/help":
-        await message.channel.send(
+        help_text = (
             "Available commands:\n"
             "\n== System & Power ==\n"
             "/test                 - Pipeline check (returns 8)\n"
@@ -205,3 +205,5 @@ async def handle_reactive_command(client, message):
             "\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\n"
             "/help                 - This message"
         )
+        for i in range(0, len(help_text), 1900):
+            await message.channel.send(help_text[i:i + 1900])

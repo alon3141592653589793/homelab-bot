@@ -10,6 +10,13 @@ subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], captu
 import api_manager
 api_manager.wait_critical()
 
+# Drop a flag so main.py announces "scripts loaded" when the bot comes back.
+# /dev/shm is RAM (cleared on reboot), so this must live on disk.
+try:
+    open("/home/alon/secure-pi-bot/.reboot_notify", "w").close()
+except OSError:
+    pass
+
 # Use systemctl reboot — goes through polkit (no sudo, no password prompt)
 result = subprocess.run(["systemctl", "reboot"], capture_output=True, text=True, timeout=10)
 if result.returncode != 0:
