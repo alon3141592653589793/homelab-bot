@@ -269,6 +269,11 @@ def main():
     if no_reboot:
         print("Skipping reboot (--no-reboot). Restart the bot by hand to load the new code.")
     else:
+        # Drop a flag so main.py announces "scripts loaded" when the bot comes back.
+        try:
+            open(os.path.expanduser("~/secure-pi-bot/.reboot_notify"), "w").close()
+        except OSError:
+            pass
         print("Rebooting in 3s...")
         subprocess.Popen(["sh", "-c", "sleep 3; systemctl reboot"], start_new_session=True)
 
