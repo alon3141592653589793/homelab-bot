@@ -33,8 +33,7 @@ if not TOKEN or not ALLOWED_USER_ID or not COMMAND_CHANNEL_ID or not ALERT_CHANN
     print("CRITICAL: Environment variables misconfigured.")
     sys.exit(1)
 
-# Per-channel command routers (defaults to 0 = channel disabled). The /testall
-# lock is checked centrally in on_message so ALL channels pause during a run.
+# Per-channel command routers (defaults to 0 = channel disabled).
 CHANNEL_HANDLERS = {
     COMMAND_CHANNEL_ID: handle_reactive_command,
     ADGUARD_CHANNEL_ID: handle_adguard_command,
@@ -59,12 +58,14 @@ if IS_TEST_MODE:
         sys.exit(1)
 
 # Read directly from sysfs — no subprocess needed
-def get_core_temp() -> float:
+def get_core_temp():
+    # Returns None on read failure instead of a fabricated 45C — a fake value
+    # would silently mask a dead thermal sensor and never trip an alert.
     try:
         with open("/sys/class/thermal/thermal_zone0/temp") as f:
             return int(f.read()) / 1000.0
     except OSError:
-        return 45.0
+        return None
 
 STATUS_FILE = "/dev/shm/pi-bot/.bot_status.json"
 
@@ -90,7 +91,7 @@ async def passive_thermal_monitor():
     # --- Temperature check (with 5-min cooldown) ---
     import time
     temp = get_core_temp()
-    if temp >= ALERT_THRESHOLD:
+    if temp is not None and temp >= ALERT_THRESHOLD:
         now = time.monotonic()
         if now - _last_alert_ts >= 300:
             _last_alert_ts = now
@@ -102,13 +103,17 @@ async def passive_thermal_monitor():
                     f"Current: {temp:.1f}C (Threshold: {ALERT_THRESHOLD:.1f}C)\n"
                     f"Run /cooldown to reduce heat."
                 )
-                # Auto-trigger AI diagnosis on overheat (fire-and-forget)
+                # Auto-trigger AI diagnosis on overheat (fire-and-forget).
+                # Guarded so a spawn failure can't kill the monitor task loop.
                 ai_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "ai_debug.py")
-                await asyncio.create_subprocess_exec(
-                    "python3", "-u", ai_script, "--auto-error",
-                    f"Overheat: core temp {temp:.1f}C breached threshold {ALERT_THRESHOLD:.1f}C. Diagnose heat sources and suggest cooldown.",
-                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
-                )
+                try:
+                    await asyncio.create_subprocess_exec(
+                        "python3", "-u", ai_script, "--auto-error",
+                        f"Overheat: core temp {temp:.1f}C breached threshold {ALERT_THRESHOLD:.1f}C. Diagnose heat sources and suggest cooldown.",
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+                    )
+                except Exception:
+                    pass
 
     # --- Failed services check (alerts on NEW failures + recoveries) ---
     current_failed = set()
@@ -198,9 +203,6 @@ async def on_message(message):
         return
     handler = CHANNEL_HANDLERS.get(message.channel.id)
     if not handler:
-        return
-    if os.path.exists("/dev/shm/pi-bot/.testall_running"):
-        await message.channel.send("⏳ /testall is running -- commands paused until it finishes.")
         return
     await handler(client, message)
 

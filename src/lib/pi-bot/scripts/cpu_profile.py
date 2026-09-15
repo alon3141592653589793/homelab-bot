@@ -19,8 +19,13 @@ def write_sysfs(path, value):
         with open(path, "w") as f:
             f.write(value)
     except PermissionError:
-        subprocess.run(["sudo", "tee", path], input=value,
-                       capture_output=True, text=True)
+        # Timeout so a misconfigured sudo (e.g. a password prompt) can't hang
+        # the every-minute profile scheduler cron indefinitely.
+        try:
+            subprocess.run(["sudo", "tee", path], input=value,
+                           capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 def current_max_khz():
     try:
