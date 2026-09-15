@@ -152,6 +152,9 @@ async def handle_reactive_command(client, message):
     elif content == "/diskhealth":
         await run_script(message, "disk_health.py", "Checking SD card health...", timeout=20)
 
+    elif content == "/integrity":
+        await run_script(message, "integrity_check.py", "Verifying deployed scripts vs GitHub...", timeout=60)
+
     elif content == "/logs" or raw.lower().startswith("/logs "):
         await run_script(message, "log_tail.py", "", args=raw.split()[1:], timeout=15)
 
@@ -174,6 +177,7 @@ async def handle_reactive_command(client, message):
             "/diag                 - Network + SSH + WiFi diagnostics\n"
             "/boot                 - Boot/reboot history + skip-cause diagnosis\n"
             "/diskhealth           - SD card health (dmesg, read-only, smart)\n"
+            "/integrity            - Verify deployed scripts match GitHub (origin/main)\n"
             "/logs <name> [n]      - Tail any log file (/logs to list)\n"
             "\n== Security ==\n"
             "/lynis                - Run Lynis security audit now\n"

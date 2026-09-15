@@ -48,6 +48,7 @@ import gofileKeepalivePy from "pi-bot:scripts/gofile_keepalive.py";
 import wireguardSetupPy from "pi-bot:scripts/wireguard_setup.py";
 import piDeployPy from "pi-bot:scripts/pi_deploy.py";
 import deployInfoPy from "pi-bot:scripts/deploy_info.py";
+import integrityCheckPy from "pi-bot:scripts/integrity_check.py";
 import testReplyPy from "pi-bot:scripts/test_reply.py";
 import netScanPy from "pi-bot:scripts/net_scan.py";
 import netScanAutoPy from "pi-bot:scripts/net_scan_auto.py";
@@ -430,6 +431,14 @@ const scripts = [
     description: "/syncinfo (alias /deployinfo): when the GitHub repo was last updated (local HEAD vs remote) and when /sync last ran (from .deploy_state.json).",
     tags: ["deploy", "github", "sync", "status", "discord"],
     code: deployInfoPy,
+  },
+  {
+    id: "integrity-check",
+    filename: "integrity_check.py",
+    path: "~/secure-pi-bot/scripts/integrity_check.py",
+    description: "Monthly (1st of month) + /integrity. Verifies every deployed script byte-matches GitHub origin/main. Warns the alert channel on any modified/missing file; recommends /sync. State -> .integrity_state.json for /parameters.",
+    tags: ["integrity", "github", "cron", "discord", "security"],
+    code: integrityCheckPy,
   },
   {
     id: "maintenance",

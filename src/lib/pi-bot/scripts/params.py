@@ -97,6 +97,14 @@ try:
 except (OSError, ValueError):
     L.append("Net-scan auto (50h)            : (no scans yet)")
 
+try:
+    with open(f"{SHM}/.integrity_state.json") as f:
+        ic = json.load(f)
+    bad = len(ic.get("divergent", [])) + len(ic.get("missing", []))
+    L.append(f"Script integrity (monthly)    : {ic.get('result', '?')}  last {ic.get('last_run', '?')}  checked={ic.get('checked', '?')}  divergent={bad}  (/integrity)")
+except (OSError, ValueError):
+    L.append("Script integrity (monthly)    : (never run)  (/integrity)")
+
 if psutil:
     boot = datetime.fromtimestamp(psutil.boot_time())
     up = datetime.now() - boot

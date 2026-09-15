@@ -39,6 +39,11 @@
 # Reports NEW hosts (not seen in the last 5 scans) to Discord + logs every scan.
 7 * * * * python3 /home/alon/secure-pi-bot/scripts/net_scan_auto.py >> /dev/shm/pi-bot/net_scan_auto.log 2>&1
 
+# Monthly script-integrity check (1st of month, 03:30). Compares every deployed
+# script to GitHub origin/main and warns the alert channel on any modified or
+# missing file. Manual: /integrity. State -> .integrity_state.json.
+30 3 1 * * python3 /home/alon/secure-pi-bot/scripts/integrity_check.py --post >> /dev/shm/pi-bot/integrity.log 2>&1
+
 # Gofile mirror keep-alive + integrity re-check -- UNCOMMENT only after you
 # confirm gofile_keepalive.py can resolve a real download on your account.
 # 17 */6 * * * python3 /home/alon/secure-pi-bot/scripts/gofile_keepalive.py >> /dev/shm/pi-bot/gofile_keepalive.log 2>&1
