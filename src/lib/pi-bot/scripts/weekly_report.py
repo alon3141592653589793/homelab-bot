@@ -172,7 +172,10 @@ if spikes:
     )
     lines.append(f"Spikes ({len(spikes)}): {sp}")
 
-lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total")
+if fan_entries:
+    lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total")
+else:
+    lines.append("Fan: didn't collect (no events logged this week)")
 
 report = "\n".join(lines)
 if TEST_MODE:

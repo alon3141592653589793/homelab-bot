@@ -9,9 +9,6 @@ def _led_ctl(mode):
     return subprocess.run(LED_CTL + [mode], capture_output=True, text=True, timeout=10)
 
 async def handle_reactive_command(client, message):
-    if os.path.exists("/dev/shm/pi-bot/.testall_running"):
-        await message.channel.send("⏳ /testall is running -- commands paused until it finishes.")
-        return
     content = message.content.strip().lower()
     raw = message.content.strip()
 
@@ -134,9 +131,6 @@ async def handle_reactive_command(client, message):
     elif content == "/bootresume":
         await run_script(message, "boot_resume.py", "Resuming lab autostart...")
 
-    elif content == "/testall":
-        await run_script(message, "test_all.py", "Running full test suite -> #testing...", timeout=1800)
-
     elif content == "/leds off":
         r = _led_ctl("off")
         await message.channel.send("LEDs forced OFF until reboot (dark for your sleep). /leds auto to resume." if r.returncode == 0 else "LEDs set off but couldn't apply now -- need /usr/local/bin/led_ctl in sudoers (see setup). They'll apply on the next pi-leds poll if the daemon runs.")
@@ -197,7 +191,6 @@ async def handle_reactive_command(client, message):
             "/bootresume           - Restore crontab + clear skip flag (then /restart)\n"
             "\n== Advanced ==\n"
             "/aidebug <question>   - Conversational AI diagnostic (optional: model prefix)\n"
-            "/testall              - Run full test suite (posts to #testing)\n"
             "/sync                 - Pull latest from the repo, reboot\n"
             "/sync no-reboot       - Same, but skip the reboot\n"
             "/sync dry-run         - Fetch + list what would change (no write, no reboot)\n"
