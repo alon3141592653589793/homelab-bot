@@ -10,12 +10,17 @@ FLAG = f"{BOT}/.skip_autostart"
 CRON_BAK = f"{BOT}/.crontab_backup"
 
 ts = datetime.now().strftime("%H:%M:%S")
+CRON_SRC = f"{BOT}/src/lib/pi-bot/crontab.txt"
 restored = False
 if os.path.exists(CRON_BAK):
     r = subprocess.run(["crontab", CRON_BAK], capture_output=True, text=True, timeout=5)
     restored = r.returncode == 0
     if restored:
         os.remove(CRON_BAK)
+if not restored and os.path.exists(CRON_SRC):
+    # No backup -- the repo crontab.txt is the source of truth (Option A).
+    r = subprocess.run(["crontab", CRON_SRC], capture_output=True, text=True, timeout=5)
+    restored = r.returncode == 0
 try:
     os.remove(FLAG)
 except FileNotFoundError:
@@ -23,7 +28,7 @@ except FileNotFoundError:
 
 print(f"**Autostart RESUMED** [{ts}]")
 if restored:
-    print("Crontab restored from backup.")
+    print("Crontab restored (from backup, or from repo crontab.txt when no backup existed).")
 else:
-    print("No crontab backup found -- re-install it with /sync (or: crontab ~/secure-pi-bot/src/lib/pi-bot/crontab.txt).")
+    print("Could not restore crontab -- re-install it with /sync (or: crontab ~/secure-pi-bot/src/lib/pi-bot/crontab.txt).")
 print("Skip flag cleared. Run /restart (or reboot) to start the full lab normally.")
