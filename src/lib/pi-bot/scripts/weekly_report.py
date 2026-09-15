@@ -165,6 +165,20 @@ lines.append(
     if temps else "Temp: No data (enable with /logging start)"
 )
 
+# Was data collection enabled long enough this week?
+if sys_entries:
+    _ts = [datetime.fromisoformat(e.get("ts_start") or e.get("ts")) for e in sys_entries if e.get("ts_start") or e.get("ts")]
+    if _ts:
+        span_h = (max(_ts) - min(_ts)).total_seconds() / 3600
+        if span_h < 24 * 6:
+            lines.append(f"Logging: only {int(span_h)}h covered -- not enough for a full week (/logging start)")
+        else:
+            lines.append(f"Logging: {len(sys_entries)} entries over {int(span_h // 24)}d {int(span_h % 24)}h")
+    else:
+        lines.append("Logging: 0 entries -- collection disabled all week (/logging start)")
+else:
+    lines.append("Logging: 0 entries -- collection disabled all week (/logging start)")
+
 if spikes:
     sp = " | ".join(
         f"{datetime.fromisoformat(s.get('ts') or s.get('ts_start','')).strftime('%m/%d %H:%M')}={s.get('temp_c') or s.get('temp_avg_c')}C"
@@ -172,10 +186,7 @@ if spikes:
     )
     lines.append(f"Spikes ({len(spikes)}): {sp}")
 
-if fan_entries:
-    lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total")
-else:
-    lines.append("Fan: didn't collect (no events logged this week)")
+lines.append(f"Fan: {len(fan_sessions)} sessions | {int(total_fan_s//60)}m total")
 
 report = "\n".join(lines)
 if TEST_MODE:
