@@ -60,6 +60,32 @@ def load_token():
         sys.exit(1)
 
 
+def load_discord_token():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv("/home/alon/secure-pi-bot/.env")
+    except Exception:
+        pass
+    return os.getenv("DISCORD_BOT_TOKEN", "")
+
+
+def post_channel(channel_id, text, token=None):
+    """Post text to a Discord channel (chunked to 1900 chars). Silent on failure."""
+    if not channel_id:
+        return
+    if token is None:
+        token = load_discord_token()
+    if not token:
+        return
+    url = f"https://discord.com/api/v10/channels/{int(channel_id)}/messages"
+    hdr = {"Authorization": f"Bot {token}", "Content-Type": "application/json"}
+    for chunk in [text[i:i + 1900] for i in range(0, len(text), 1900)]:
+        try:
+            requests.post(url, json={"content": chunk}, headers=hdr, timeout=10)
+        except Exception:
+            pass
+
+
 def parse_ref(words):
     """Parse a model ref into (repo, tag_or_file).
     Accepts: 'ollama run hf.co/OWNER/REPO:TAG' | 'OWNER/REPO:TAG' | 'OWNER/REPO FILE'.
@@ -124,12 +150,14 @@ def resolve_file(repo, rev, tag, explicit_file):
     return None, None, None
 
 
-def stream_to_gofile(source_url, token, fname, folder_id=None):
+def stream_to_gofile(source_url, token, fname, folder_id=None, size_acc=None):
     """Download source_url and upload to Gofile in one streamed pass.
     RAM stays ~pipe size. Returns (sha256_hex, bytes, gofile_response_dict) or
-    raises on fatal error."""
+    raises on fatal error. size_acc (a [int] list) is mutated live so an
+    external progress reporter can read bytes-so-far."""
     sha = hashlib.sha256()
-    size_acc = [0]
+    if size_acc is None:
+        size_acc = [0]
     dl_error = {}
 
     try:
@@ -224,17 +252,30 @@ def main():
     ap.add_argument("--rev", default="main")
     ap.add_argument("--folder", default=None, help="Gofile folder id to upload into")
     ap.add_argument("--retry", default=str(MAX_RETRY))
+    ap.add_argument("--progress", type=int, default=None, help="progress report interval in minutes (Discord)")
+    ap.add_argument("--channel", default=None, help="Discord channel id to report to")
     args = ap.parse_args()
 
     token = load_token()
     os.makedirs(MANIFEST_DIR, exist_ok=True)
+    channel = args.channel
+    dtoken = load_discord_token() if channel else None
+
+    def report(text):
+        # When driven from Discord (--channel), post to the channel and keep
+        # stdout quiet (one final line for run_script). When run from SSH, just
+        # print to stdout.
+        if channel:
+            post_channel(channel, text, dtoken)
+        else:
+            print(text)
 
     if args.repo and args.file:
         repo, filename, rev = args.repo, args.file, args.rev
     else:
         repo, tag, explicit = parse_ref(args.ref)
         if not repo:
-            print("Usage: /gofile ollama run hf.co/OWNER/REPO:TAG  (or OWNER/REPO:TAG)")
+            report("Usage: /gofile [minutes] ollama run hf.co/OWNER/REPO:TAG  (or OWNER/REPO:TAG)")
             sys.exit(1)
         filename, hf_size, hf_sha = resolve_file(repo, args.rev, tag, explicit)
         if not filename:
@@ -242,7 +283,6 @@ def main():
         rev = args.rev
 
     source_url = f"{HF_BASE}/{repo}/resolve/{rev}/{filename}"
-    # fetch metadata for verification (when not already resolved via tag path)
     hf_sha = None
     hf_size = None
     try:
@@ -257,30 +297,54 @@ def main():
     except Exception:
         pass
 
-    print(f"Source : {repo}/{filename}  rev={rev}")
-    print(f"Size   : {hf_size} bytes" if hf_size else "Size   : (unknown)")
-    print(f"Uploading to Gofile, streamed through RAM (no whole-file buffering)...")
-    t0 = time.time()
+    report(f"Mirroring {repo}/{filename} -> Gofile (streamed, RAM-only)")
+    report(f"Size: {hf_size} bytes" if hf_size else "Size: (unknown)")
 
-    local_sha, total, gf = stream_to_gofile(source_url, token, filename, folder_id=args.folder)
+    t0 = time.time()
+    size_acc = [0]
+    stop_ev = threading.Event()
+
+    # periodic progress reporter: only when a --progress interval (minutes) is given
+    if channel and args.progress:
+        def progress_loop():
+            interval = max(1, args.progress) * 60
+            while not stop_ev.wait(interval):
+                got = size_acc[0]
+                elapsed = time.time() - t0
+                rate = got / elapsed if elapsed else 0
+                line = f"[gofile] {got/1e6:.1f} MB / {elapsed/60:.1f} min ({rate/1e6:.2f} MB/s)"
+                if hf_size and rate > 0:
+                    eta = (hf_size - got) / rate
+                    line += f"  ETA {eta/60:.0f} min  ({100*got/hf_size:.0f}%)"
+                post_channel(channel, line, dtoken)
+        threading.Thread(target=progress_loop, daemon=True).start()
+
+    try:
+        local_sha, total, gf = stream_to_gofile(source_url, token, filename, folder_id=args.folder, size_acc=size_acc)
+    except Exception as e:
+        stop_ev.set()
+        report(f"FAILURE: mirror failed -> {e}")
+        sys.exit(1)
+    stop_ev.set()
+
     elapsed = time.time() - t0
     rate = (total / 1e6 / elapsed) if elapsed else 0
-    print(f"Done   : {total/1e6:.1f} MB in {elapsed/60:.1f} min ({rate:.1f} MB/s)")
-
     gf_md5 = gf.get("md5")
     page = gf.get("downloadPage")
-    print(f"Gofile : id={gf.get('id')}  code={gf.get('code')}")
-    print(f"Link   : {page}")
-    print(f"sha256 : {local_sha}")
-    if hf_sha:
-        if local_sha == hf_sha:
-            print("Verify : OK -- matches HuggingFace LFS sha256")
-        else:
-            print(f"Verify : MISMATCH -- HF says {hf_sha[:16]}... but we uploaded {local_sha[:16]}... (source may be corrupt)")
+    if hf_sha and local_sha == hf_sha:
+        verify = "OK -- matches HuggingFace LFS sha256"
+    elif hf_sha:
+        verify = f"MISMATCH -- HF {hf_sha[:16]}... vs ours {local_sha[:16]}... (source may be corrupt)"
     else:
-        print("Verify : (no LFS sha256 from HF; uploaded as-is)")
-    if gf_md5:
-        print(f"md5    : {gf_md5}")
+        verify = "(no LFS sha256 from HF; uploaded as-is)"
+
+    summary = (
+        f"Done: {total/1e6:.1f} MB in {elapsed/60:.1f} min ({rate:.1f} MB/s)\n"
+        f"Link: {page}\n"
+        f"sha256: {local_sha}\n"
+        f"Verify: {verify}"
+    )
+    report(summary)
 
     manifest = {}
     if os.path.exists(MANIFEST_FILE):
@@ -301,9 +365,10 @@ def main():
     try:
         with open(MANIFEST_FILE, "w") as f:
             json.dump(manifest, f, indent=2)
-    except OSError as e:
-        print(f"(warn: could not write manifest: {e})")
-    print("OK. Recorded in manifest.")
+    except OSError:
+        pass
+    if channel:
+        print("Done — summary posted in channel.")
 
 
 if __name__ == "__main__":
