@@ -54,5 +54,6 @@
 0 */6 * * * python3 /home/alon/secure-pi-bot/scripts/proxy_pool.py --refresh >> /dev/shm/pi-bot/proxy_pool.log 2>&1
 
 # Home Front Command (Pikud HaOref) alert monitor — every 1 min. Posts NEW
-# alerts to the command channel, filtered by /setlocation. /alerts to view.
+# alerts to the command channel, filtered by /setlocation (silent until a
+# location is set). /alerts to view.
 * * * * python3 /home/alon/secure-pi-bot/scripts/pikud_alerts.py >> /dev/shm/pi-bot/pikud_alerts.log 2>&1
