@@ -31,8 +31,11 @@ except ImportError:
 
 MANIFEST_FILE = "/home/alon/secure-pi-bot/gofile_mirror/manifest.json"
 TOKEN_FILE = os.path.expanduser("~/.secrets/gofile_token")
+KEEP_FILE = os.path.expanduser("~/.secrets/gofile_keep.txt")
 CHUNK = 1024 * 1024
 UA = {"User-Agent": "Mozilla/5.0"}
+
+import proxy_pool
 
 
 def load_token():
@@ -48,7 +51,7 @@ def resolve_direct(code, tk):
     fall back to scraping the share page for a store-*.gofile.io link."""
     headers = {"Authorization": f"Bearer {tk}"} if tk else {}
     try:
-        r = requests.get(f"https://api.gofile.io/contents/{code}", headers=headers, timeout=30)
+        r = proxy_pool.get(f"https://api.gofile.io/contents/{code}", headers=headers, timeout=30)
         b = r.json()
         if b.get("status") == "ok":
             d = b["data"]
@@ -59,7 +62,7 @@ def resolve_direct(code, tk):
     except Exception:
         pass
     # Free fallback: scrape the share page HTML for a store-* CDN url.
-    p = requests.get(f"https://gofile.io/d/{code}", headers=UA, timeout=30)
+    p = proxy_pool.get(f"https://gofile.io/d/{code}", headers=UA, timeout=30)
     p.raise_for_status()
     m = (re.search(r'(https?://store-\d+\.gofile\.io/[^"\'<>\s]+)', p.text)
          or re.search(r'(https?://[a-z0-9.-]+\.gofile\.io/download/[^"\'<>\s]+)', p.text))
@@ -84,11 +87,23 @@ def main():
     if not os.path.exists(MANIFEST_FILE):
         print("No mirror manifest yet. Run gofile_mirror.py first.")
         return
+    # opt-in: only maintain repos listed in KEEP_FILE
+    keep = set()
+    try:
+        with open(KEEP_FILE) as f:
+            keep = {l.strip() for l in f if l.strip() and not l.startswith("#")}
+    except OSError:
+        pass
+    if not keep:
+        print("No files opted in for keep-alive. Use  /gofile keep <ref>  to add one.")
+        return
     with open(MANIFEST_FILE) as f:
         manifest = json.load(f)
     tk = load_token()
     any_fail = False
     for key, m in manifest.items():
+        if m.get("repo") not in keep:
+            continue
         try:
             url = resolve_direct(m["gofile_code"], tk)
             sha, got = stream_and_hash(url)

@@ -105,6 +105,24 @@ try:
 except (OSError, ValueError):
     L.append("Script integrity (monthly)    : (never run)  (/integrity)")
 
+try:
+    with open(f"{SHM}/proxy_pool.json") as f:
+        pp = json.load(f)
+    ptime = datetime.fromtimestamp(pp.get("fetched", 0)).strftime("%m-%d %H:%M") if pp.get("fetched") else "?"
+    L.append(f"Proxy pool (6h refresh)       : {len(pp.get('proxies', []))} alive  built {ptime}  (/proxy status|refresh)")
+except (OSError, ValueError):
+    L.append("Proxy pool (6h refresh)       : (not built)  (/proxy refresh)")
+
+ploc = read_file(os.path.expanduser("~/.secrets/pikud_location.txt"), "(all Israel)")
+L.append(f"Pikud alerts (1-min)          : filter={ploc}  (/setlocation <place|off>, /alerts)")
+
+try:
+    with open(os.path.expanduser("~/.secrets/gofile_keep.txt")) as f:
+        kept = [l.strip() for l in f if l.strip()]
+    L.append(f"Gofile keep-alive (6h)        : {len(kept)} opted in  (/gofile keep|forget <ref>)")
+except OSError:
+    L.append("Gofile keep-alive (6h)        : (none opted in)  (/gofile keep <ref>)")
+
 if psutil:
     boot = datetime.fromtimestamp(psutil.boot_time())
     up = datetime.now() - boot

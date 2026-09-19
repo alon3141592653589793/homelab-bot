@@ -28,6 +28,7 @@ import time
 import hashlib
 import argparse
 import threading
+import signal
 import datetime as dt
 from datetime import datetime
 
@@ -36,6 +37,8 @@ try:
 except ImportError:
     print("FAILURE: requests missing. pip3 install --user requests")
     sys.exit(1)
+
+import proxy_pool
 
 TOKEN_FILE = os.path.expanduser("~/.secrets/gofile_token")
 MANIFEST_DIR = "/home/alon/secure-pi-bot/gofile_mirror"
@@ -86,6 +89,32 @@ def post_channel(channel_id, text, token=None):
             pass
 
 
+SHM_DIR = "/dev/shm/pi-bot"
+GFILE_ACTIVE = os.path.join(SHM_DIR, ".gofile_active")
+
+
+def _write_active(repo, filename):
+    try:
+        os.makedirs(SHM_DIR, exist_ok=True)
+        with open(GFILE_ACTIVE, "w") as f:
+            json.dump({"pid": os.getpid(), "ref": f"{repo}/{filename}",
+                       "file": filename, "started": datetime.now().isoformat(timespec="seconds")}, f)
+    except OSError:
+        pass
+
+
+def _clear_active():
+    try:
+        os.remove(GFILE_ACTIVE)
+    except OSError:
+        pass
+
+
+def _sigterm(*_):
+    _clear_active()
+    sys.exit(130)
+
+
 def parse_ref(words):
     """Parse a model ref into (repo, tag_or_file).
     Accepts: 'ollama run hf.co/OWNER/REPO:TAG' | 'OWNER/REPO:TAG' | 'OWNER/REPO FILE'.
@@ -111,7 +140,7 @@ def resolve_file(repo, rev, tag, explicit_file):
     If explicit_file given, match it exactly. Else match tag as a substring
     (case-insensitive), preferring .gguf > .safetensors > .bin."""
     try:
-        r = requests.get(f"{HF_BASE}/api/models/{repo}/tree/{rev}", timeout=30)
+        r = proxy_pool.get(f"{HF_BASE}/api/models/{repo}/tree/{rev}", timeout=30)
         r.raise_for_status()
         entries = r.json()
     except Exception as e:
@@ -286,7 +315,7 @@ def main():
     hf_sha = None
     hf_size = None
     try:
-        mr = requests.get(f"{HF_BASE}/api/models/{repo}/tree/{rev}", timeout=30)
+        mr = proxy_pool.get(f"{HF_BASE}/api/models/{repo}/tree/{rev}", timeout=30)
         if mr.status_code == 200:
             for e in mr.json():
                 if e.get("path") == filename:
@@ -319,13 +348,17 @@ def main():
                 post_channel(channel, line, dtoken)
         threading.Thread(target=progress_loop, daemon=True).start()
 
+    signal.signal(signal.SIGTERM, _sigterm)
+    _write_active(repo, filename)
     try:
         local_sha, total, gf = stream_to_gofile(source_url, token, filename, folder_id=args.folder, size_acc=size_acc)
     except Exception as e:
         stop_ev.set()
+        _clear_active()
         report(f"FAILURE: mirror failed -> {e}")
         sys.exit(1)
     stop_ev.set()
+    _clear_active()
 
     elapsed = time.time() - t0
     rate = (total / 1e6 / elapsed) if elapsed else 0

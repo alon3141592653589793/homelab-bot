@@ -44,6 +44,15 @@
 # missing file. Manual: /integrity. State -> .integrity_state.json.
 30 3 1 * * python3 /home/alon/secure-pi-bot/scripts/integrity_check.py --post >> /dev/shm/pi-bot/integrity.log 2>&1
 
-# Gofile mirror keep-alive + integrity re-check -- UNCOMMENT only after you
-# confirm gofile_keepalive.py can resolve a real download on your account.
-# 17 */6 * * * python3 /home/alon/secure-pi-bot/scripts/gofile_keepalive.py >> /dev/shm/pi-bot/gofile_keepalive.log 2>&1
+# Gofile mirror keep-alive + integrity re-check (every 6h). Only maintains
+# files you opted in with  /gofile keep <ref>.  /gofile forget <ref> to stop.
+17 */6 * * * python3 /home/alon/secure-pi-bot/scripts/gofile_keepalive.py >> /dev/shm/pi-bot/gofile_keepalive.log 2>&1
+
+# Free rotating proxy pool refresh (every 6h). Fetches + tests candidates so
+# outbound API calls (HF, Gemini, Google, Gofile API) rotate exit IPs and
+# dodge rate limits / home-IP fingerprinting. /proxy status|refresh
+0 */6 * * * python3 /home/alon/secure-pi-bot/scripts/proxy_pool.py --refresh >> /dev/shm/pi-bot/proxy_pool.log 2>&1
+
+# Home Front Command (Pikud HaOref) alert monitor — every 1 min. Posts NEW
+# alerts to the command channel, filtered by /setlocation. /alerts to view.
+* * * * * python3 /home/alon/secure-pi-bot/scripts/pikud_alerts.py >> /dev/shm/pi-bot/pikud_alerts.log 2>&1

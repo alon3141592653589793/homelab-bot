@@ -115,9 +115,14 @@ if [ -f "$UPDATES_LOCK" ] || [ "$(date +%u)" != "$UPDATES_DOW" ]; then
     log "Reboot: SKIPPED (no updates ran this pass)"
     echo "Reboot: SKIPPED" >> "$QUEUE"
 else
-    python3 -c "import sys; sys.path.insert(0,'/home/alon/secure-pi-bot/scripts'); import api_manager; api_manager.wait_critical()"
-    log "Issuing scheduled maintenance reboot via systemctl reboot (polkit-authorized)."
-    systemctl reboot >> "$LOG_FILE" 2>&1
+    if [ -f /dev/shm/pi-bot/.gofile_active ]; then
+        log "Reboot: SKIPPED — a /gofile mirror download is in progress (will retry next maintenance pass)."
+        echo "Reboot: SKIPPED (gofile download active)" >> "$QUEUE"
+    else
+        python3 -c "import sys; sys.path.insert(0,'/home/alon/secure-pi-bot/scripts'); import api_manager; api_manager.wait_critical()"
+        log "Issuing scheduled maintenance reboot via systemctl reboot (polkit-authorized)."
+        systemctl reboot >> "$LOG_FILE" 2>&1
+    fi
 fi
 
 # Release the maintenance throttle marker so the profile scheduler restores
