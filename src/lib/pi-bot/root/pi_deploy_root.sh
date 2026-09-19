@@ -27,10 +27,15 @@ while IFS=$'\t' read -r src dst || [ -n "$src" ]; do
     continue
   fi
 
-  # @crontab -> apply as alon's crontab
+  # @crontab -> apply as alon's crontab (crontab(1) requires a trailing
+  # newline before EOF; normalize via a temp file so the source is untouched)
   if [ "$dst" = "@crontab" ]; then
     cp "$srcpath" "$BK/crontab.bak"
-    sudo -u alon crontab "$srcpath"
+    tmp="$(mktemp)"
+    cat "$srcpath" > "$tmp"
+    [ -z "$(tail -c1 "$tmp")" ] || printf '\n' >> "$tmp"
+    sudo -u alon crontab "$tmp"
+    rm -f "$tmp"
     echo "+ $src -> @crontab (applied)"
     INSTALLED=$((INSTALLED + 1))
     continue
