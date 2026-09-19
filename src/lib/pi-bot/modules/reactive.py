@@ -305,7 +305,7 @@ async def handle_reactive_command(client, message):
 
     elif content == "/leds off":
         r = _led_ctl("off")
-        await message.channel.send("LEDs forced OFF until reboot (dark for your sleep). /leds auto to resume." if r.returncode == 0 else "LEDs set off but couldn't apply now -- need /usr/local/bin/led_ctl in sudoers (see setup). They'll apply on the next pi-leds poll if the daemon runs.")
+        await message.channel.send("LEDs forced OFF until reboot (dark for your sleep). /leds auto to resume." if r.returncode == 0 else "Couldn't apply -- the one-time sudoers rule for /usr/local/bin/led_ctl isn't set. Run the 'LED CONTROL -- root helper + sudoers' block in setup-notes.txt (3 lines), then /leds off again.")
 
     elif content == "/leds on":
         r = _led_ctl("on")
