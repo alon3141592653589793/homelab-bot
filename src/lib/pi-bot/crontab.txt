@@ -55,4 +55,4 @@
 
 # Home Front Command (Pikud HaOref) alert monitor — every 1 min. Posts NEW
 # alerts to the command channel, filtered by /setlocation. /alerts to view.
-* * * * * python3 /home/alon/secure-pi-bot/scripts/pikud_alerts.py >> /dev/shm/pi-bot/pikud_alerts.log 2>&1
+* * * * python3 /home/alon/secure-pi-bot/scripts/pikud_alerts.py >> /dev/shm/pi-bot/pikud_alerts.log 2>&1
