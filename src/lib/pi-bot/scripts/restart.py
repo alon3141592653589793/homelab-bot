@@ -17,6 +17,10 @@ try:
 except OSError:
     pass
 
+# Turn all LEDs ON as a visual "pre-shutdown work done, rebooting now" signal
+# so you can physically tell the moment it's safe to act. Best-effort.
+subprocess.run(["sudo", "-n", "/usr/local/bin/led_ctl", "on"], capture_output=True, timeout=10)
+
 # Use systemctl reboot — goes through polkit (no sudo, no password prompt)
 result = subprocess.run(["systemctl", "reboot"], capture_output=True, text=True, timeout=10)
 if result.returncode != 0:

@@ -10,6 +10,10 @@ subprocess.run(["python3", os.path.join(SCRIPTS_DIR, "compress_logs.py")], captu
 import api_manager
 api_manager.wait_critical()
 
+# Turn all LEDs ON as a visual "pre-shutdown work done, powering off now" signal
+# so you can physically tell the moment it's safe to unplug. Best-effort.
+subprocess.run(["sudo", "-n", "/usr/local/bin/led_ctl", "on"], capture_output=True, timeout=10)
+
 # Use systemctl poweroff — goes through polkit (no sudo, no password prompt)
 result = subprocess.run(["systemctl", "poweroff"], capture_output=True, text=True, timeout=10)
 if result.returncode != 0:
