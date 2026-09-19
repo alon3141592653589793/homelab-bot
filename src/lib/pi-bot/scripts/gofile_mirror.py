@@ -1,28 +1,34 @@
 #!/usr/bin/env python3
-"""
-Mirror a HuggingFace model file to Gofile (cloud-to-cloud, via Pi RAM staging).
-The model NEVER touches the Pi's SD card -- it lands in /dev/shm (tmpfs), is
-verified, uploaded, then wiped. Only a tiny manifest is kept on the Pi.
+"""Mirror a HuggingFace model file to Gofile, STREAMED through RAM.
 
-Anti-censorship: if the source host removes the file, the verified Gofile copy
-(pre-share link) survives.
+The model NEVER touches the SD card and NEVER sits whole in RAM. A background
+thread downloads the source into one end of an OS pipe; the upload generator
+reads the other end and POSTs it to Gofile with chunked transfer-encoding, so
+RAM stays ~pipe size (a few MB) no matter how big the file is. sha256 is hashed
+on the fly during the download and verified against HuggingFace's LFS oid at
+the end. Only a tiny manifest is kept on the Pi.
 
-Setup:
-  - Gofile token at ~/.secrets/gofile_token (chmod 600). Get it from
-    https://gofile.io/myprofile  (guest or email account).
-  - pip3 install --user requests
+Usage (Discord / SSH):
+  /gofile ollama run hf.co/OBLITERATUS/Qwen3.8-27B-OBLITERATED:Q4_K_M
+  python3 gofile_mirror.py ollama run hf.co/OWNER/REPO:TAG
+  python3 gofile_mirror.py OWNER/REPO:TAG
+  python3 gofile_mirror.py --repo OWNER/REPO --file model.gguf   # legacy explicit
 
-Usage (defaults to a ~17MB tiny BERT so you can test the whole pipeline):
-  python3 gofile_mirror.py
-  python3 gofile_mirror.py --repo gpt2 --file model.safetensors --rev main
+Setup: Gofile token at ~/.secrets/gofile_token (chmod 600). Get it from
+https://gofile.io/myprofile. pip3 install --user requests
+
+NOTE: because the upload streams before the full sha256 is known, a corrupt
+source upload can't be prevented -- it's detected after the fact. "Vibe
+coding": we warn if the post-upload sha mismatches HF's oid.
 """
 import os
 import sys
 import json
 import time
-import shutil
 import hashlib
 import argparse
+import threading
+import datetime as dt
 from datetime import datetime
 
 try:
@@ -32,13 +38,13 @@ except ImportError:
     sys.exit(1)
 
 TOKEN_FILE = os.path.expanduser("~/.secrets/gofile_token")
-STAGING_DIR = "/dev/shm/pi-bot/gofile_staging"
 MANIFEST_DIR = "/home/alon/secure-pi-bot/gofile_mirror"
 MANIFEST_FILE = os.path.join(MANIFEST_DIR, "manifest.json")
 HF_BASE = "https://huggingface.co"
 UPLOAD_URL = "https://upload.gofile.io/uploadfile"
-CHUNK = 1024 * 1024  # 1 MB streaming buffer -- keeps RAM use tiny
+CHUNK = 1024 * 1024  # 1 MB -- bounds RAM via the pipe + chunk
 MAX_RETRY = 4
+BOUNDARY = "----pi-bot-gofile-8b3c1f"
 
 DEFAULT_REPO = "prajjwal1/bert-tiny"
 DEFAULT_FILE = "pytorch_model.bin"
@@ -54,123 +60,227 @@ def load_token():
         sys.exit(1)
 
 
-def hf_meta(repo, filename, rev="main"):
-    """Return (size, sha256) for a file in an HF repo, from the tree API.
-    LFS files carry lfs.oid == the content's sha256 (what we verify against)."""
-    r = requests.get(f"{HF_BASE}/api/models/{repo}/tree/{rev}", timeout=30)
-    r.raise_for_status()
-    for e in r.json():
-        if e.get("path") == filename:
-            lfs = e.get("lfs") or {}
-            return e.get("size"), lfs.get("oid")
-    raise SystemExit(f"FAILURE: '{filename}' not found in {repo} (rev {rev}).")
+def parse_ref(words):
+    """Parse a model ref into (repo, tag_or_file).
+    Accepts: 'ollama run hf.co/OWNER/REPO:TAG' | 'OWNER/REPO:TAG' | 'OWNER/REPO FILE'.
+    Returns (repo, tag, explicit_file) or (None, None, None)."""
+    toks = [t for t in words if t]
+    while toks and toks[0].lower() in ("ollama", "run", "pull"):
+        toks.pop(0)
+    if not toks:
+        return None, None, None
+    ref = " ".join(toks).strip()
+    ref = ref.replace("https://huggingface.co/", "").replace("hf.co/", "")
+    if " " in ref:
+        repo, fname = ref.split(" ", 1)
+        return repo.strip(), fname.strip(), True
+    if ":" in ref:
+        repo, tag = ref.split(":", 1)
+        return repo.strip(), tag.strip(), False
+    return ref.strip(), None, None
 
 
-def resumable_download(url, dest):
-    """HTTP-Range resumable download into dest (tmpfs). Streams in 1MB chunks so
-    RAM stays ~1MB. Returns (sha256, md5, size)."""
-    sha = hashlib.sha256()
-    md5 = hashlib.md5()
-    have = 0
-    if os.path.exists(dest):
-        have = os.path.getsize(dest)
-        with open(dest, "rb") as f:
-            while True:
-                b = f.read(CHUNK)
-                if not b:
-                    break
-                sha.update(b)
-                md5.update(b)
-    headers = {"Range": f"bytes={have}-"} if have else {}
-    with requests.get(url, headers=headers, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        # If the server ignored Range (returned 200, not 206), restart from 0
-        # instead of appending a second copy.
-        if have and r.status_code == 200:
-            have = 0
-            sha = hashlib.sha256()
-            md5 = hashlib.md5()
-        cr = r.headers.get("Content-Range", "")
-        total = (int(cr.split("/")[-1]) if "/" in cr else int(r.headers.get("Content-Length", 0)))
-        mode = "ab" if (have and r.status_code == 206) else "wb"
-        with open(dest, mode) as f:
-            recv = have
-            last = time.time()
-            for chunk in r.iter_content(chunk_size=CHUNK):
-                if not chunk:
-                    continue
-                f.write(chunk)
-                sha.update(chunk)
-                md5.update(chunk)
-                recv += len(chunk)
-                if time.time() - last > 5:
-                    pct = (100 * recv / total) if total else 0
-                    print(f"  {recv/1e6:.1f}/{total/1e6:.1f}MB ({pct:.0f}%)", flush=True)
-                    last = time.time()
-    return sha.hexdigest(), md5.hexdigest(), os.path.getsize(dest)
-
-
-def upload_to_gofile(path, token, folder_id=None):
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    fname = os.path.basename(path)
-    with open(path, "rb") as f:
-        files = {"file": (fname, f, "application/octet-stream")}
-        data = {"folderId": folder_id} if folder_id else {}
-        r = requests.post(UPLOAD_URL, headers=headers, files=files, data=data, timeout=14400)
-    r.raise_for_status()
+def resolve_file(repo, rev, tag, explicit_file):
+    """Find the file in the HF repo tree. Returns (filename, size, lfs_sha).
+    If explicit_file given, match it exactly. Else match tag as a substring
+    (case-insensitive), preferring .gguf > .safetensors > .bin."""
     try:
-        body = r.json()
-    except Exception:
-        body = {}
-    if body.get("status") != "ok":
-        raise SystemExit(f"FAILURE: Gofile rejected upload: {body}")
-    return body["data"]
+        r = requests.get(f"{HF_BASE}/api/models/{repo}/tree/{rev}", timeout=30)
+        r.raise_for_status()
+        entries = r.json()
+    except Exception as e:
+        print(f"FAILURE: could not list HF repo {repo} ({e}).")
+        return None, None, None
+
+    if explicit_file:
+        for e in entries:
+            if e.get("path") == tag:
+                lfs = e.get("lfs") or {}
+                return e.get("path"), e.get("size"), lfs.get("oid")
+        print(f"FAILURE: file '{tag}' not found in {repo}.")
+        return None, None, None
+
+    if tag:
+        tl = tag.lower()
+        cands = [e for e in entries if isinstance(e, dict) and tl in e.get("path", "").lower()]
+    else:
+        cands = [e for e in entries if isinstance(e, dict)]
+    if not cands:
+        print(f"FAILURE: no file matching '{tag}' in {repo}.")
+        return None, None, None
+    for ext in (".gguf", ".safetensors", ".bin"):
+        for e in cands:
+            p = e.get("path", "")
+            if p.lower().endswith(ext):
+                lfs = e.get("lfs") or {}
+                return p, e.get("size"), lfs.get("oid")
+    # fallback: first candidate with an extension
+    for e in cands:
+        p = e.get("path", "")
+        if "." in os.path.basename(p):
+            lfs = e.get("lfs") or {}
+            return p, e.get("size"), lfs.get("oid")
+    print(f"FAILURE: could not resolve a real file in {repo} for '{tag}'.")
+    return None, None, None
+
+
+def stream_to_gofile(source_url, token, fname, folder_id=None):
+    """Download source_url and upload to Gofile in one streamed pass.
+    RAM stays ~pipe size. Returns (sha256_hex, bytes, gofile_response_dict) or
+    raises on fatal error."""
+    sha = hashlib.sha256()
+    size_acc = [0]
+    dl_error = {}
+
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None
+
+    r_fd, w_fd = os.pipe()
+    if fcntl:
+        try:
+            # enlarge the kernel pipe buffer (~1MB) for throughput
+            fcntl.fcntl(r_fd, 1031, 1 << 20)  # F_SETPIPE_SZ
+        except OSError:
+            pass
+    r = os.fdopen(r_fd, "rb")
+    w = os.fdopen(w_fd, "wb")
+    stop = threading.Event()
+
+    def downloader():
+        try:
+            with requests.get(source_url, stream=True, timeout=120) as resp:
+                resp.raise_for_status()
+                for chunk in resp.iter_content(chunk_size=CHUNK):
+                    if stop.is_set():
+                        break
+                    if not chunk:
+                        continue
+                    sha.update(chunk)
+                    size_acc[0] += len(chunk)
+                    try:
+                        w.write(chunk)
+                    except (BrokenPipeError, OSError):
+                        break
+        except Exception as e:
+            dl_error["e"] = e
+        finally:
+            try:
+                w.close()
+            except OSError:
+                pass
+
+    t = threading.Thread(target=downloader, daemon=True)
+    t.start()
+
+    def body_gen():
+        parts = []
+        if folder_id:
+            parts.append(f"--{BOUNDARY}\r\n".encode())
+            parts.append(b'Content-Disposition: form-data; name="folderId"\r\n\r\n')
+            parts.append(f"{folder_id}\r\n".encode())
+        parts.append(f"--{BOUNDARY}\r\n".encode())
+        parts.append(f'Content-Disposition: form-data; name="file"; filename="{fname}"\r\n'.encode())
+        parts.append(b"Content-Type: application/octet-stream\r\n\r\n")
+        for p in parts:
+            yield p
+        while True:
+            chunk = r.read(CHUNK)
+            if not chunk:
+                break
+            yield chunk
+        yield f"\r\n--{BOUNDARY}--\r\n".encode()
+
+    headers = {"Content-Type": f"multipart/form-data; boundary={BOUNDARY}"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        up = requests.post(UPLOAD_URL, headers=headers, data=body_gen(), timeout=14400)
+        up.raise_for_status()
+        try:
+            body = up.json()
+        except Exception:
+            body = {}
+        if body.get("status") != "ok":
+            raise RuntimeError(f"Gofile rejected upload: {body}")
+        return sha.hexdigest(), size_acc[0], body["data"]
+    finally:
+        stop.set()
+        try:
+            r.close()
+        except OSError:
+            pass
+        t.join(timeout=30)
+        if dl_error.get("e") and not stop.is_set():
+            raise dl_error["e"]
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", default=DEFAULT_REPO)
-    ap.add_argument("--file", default=DEFAULT_FILE)
+    ap.add_argument("ref", nargs="*", help="model ref, e.g. 'ollama run hf.co/OWNER/REPO:TAG'")
+    ap.add_argument("--repo", default=None)
+    ap.add_argument("--file", default=None)
     ap.add_argument("--rev", default="main")
+    ap.add_argument("--folder", default=None, help="Gofile folder id to upload into")
     ap.add_argument("--retry", default=str(MAX_RETRY))
     args = ap.parse_args()
-    retries = int(args.retry)
 
     token = load_token()
-    source_url = f"{HF_BASE}/{args.repo}/resolve/{args.rev}/{args.file}"
-    os.makedirs(STAGING_DIR, exist_ok=True)
     os.makedirs(MANIFEST_DIR, exist_ok=True)
 
-    size, hf_sha = hf_meta(args.repo, args.file, args.rev)
-    print(f"Source: {args.repo}/{args.file}  size={size}  sha256={hf_sha or '?'}")
-
-    dest = os.path.join(STAGING_DIR, args.file.replace("/", "_"))
-    local_sha = None
-    local_md5 = None
-    for attempt in range(1, retries + 1):
-        local_sha, local_md5, local_size = resumable_download(source_url, dest)
-        if hf_sha:
-            if local_sha == hf_sha:
-                break
-            print(f"  sha MISMATCH (attempt {attempt}/{retries}); re-downloading.")
-            try:
-                os.remove(dest)
-            except OSError:
-                pass
-        else:
-            print("  no LFS sha256 from HF; trusting locally-computed sha.")
-            break
+    if args.repo and args.file:
+        repo, filename, rev = args.repo, args.file, args.rev
     else:
-        print("FAILURE: source download failed sha verification after retries.")
-        sys.exit(1)
+        repo, tag, explicit = parse_ref(args.ref)
+        if not repo:
+            print("Usage: /gofile ollama run hf.co/OWNER/REPO:TAG  (or OWNER/REPO:TAG)")
+            sys.exit(1)
+        filename, hf_size, hf_sha = resolve_file(repo, args.rev, tag, explicit)
+        if not filename:
+            sys.exit(1)
+        rev = args.rev
 
-    print(f"Source verified. sha256={local_sha[:16]}... uploading {local_size/1e6:.1f}MB to Gofile...")
-    gf = upload_to_gofile(dest, token)
+    source_url = f"{HF_BASE}/{repo}/resolve/{rev}/{filename}"
+    # fetch metadata for verification (when not already resolved via tag path)
+    hf_sha = None
+    hf_size = None
+    try:
+        mr = requests.get(f"{HF_BASE}/api/models/{repo}/tree/{rev}", timeout=30)
+        if mr.status_code == 200:
+            for e in mr.json():
+                if e.get("path") == filename:
+                    lfs = e.get("lfs") or {}
+                    hf_sha = lfs.get("oid")
+                    hf_size = e.get("size")
+                    break
+    except Exception:
+        pass
+
+    print(f"Source : {repo}/{filename}  rev={rev}")
+    print(f"Size   : {hf_size} bytes" if hf_size else "Size   : (unknown)")
+    print(f"Uploading to Gofile, streamed through RAM (no whole-file buffering)...")
+    t0 = time.time()
+
+    local_sha, total, gf = stream_to_gofile(source_url, token, filename, folder_id=args.folder)
+    elapsed = time.time() - t0
+    rate = (total / 1e6 / elapsed) if elapsed else 0
+    print(f"Done   : {total/1e6:.1f} MB in {elapsed/60:.1f} min ({rate:.1f} MB/s)")
+
     gf_md5 = gf.get("md5")
-    if gf_md5 and gf_md5 != local_md5:
-        print(f"  WARNING: Gofile md5 ({gf_md5}) != staged ({local_md5}); upload integrity suspect.")
     page = gf.get("downloadPage")
-    print(f"Uploaded. id={gf.get('id')}  code={gf.get('code')}  page={page}  md5={gf_md5}")
+    print(f"Gofile : id={gf.get('id')}  code={gf.get('code')}")
+    print(f"Link   : {page}")
+    print(f"sha256 : {local_sha}")
+    if hf_sha:
+        if local_sha == hf_sha:
+            print("Verify : OK -- matches HuggingFace LFS sha256")
+        else:
+            print(f"Verify : MISMATCH -- HF says {hf_sha[:16]}... but we uploaded {local_sha[:16]}... (source may be corrupt)")
+    else:
+        print("Verify : (no LFS sha256 from HF; uploaded as-is)")
+    if gf_md5:
+        print(f"md5    : {gf_md5}")
 
     manifest = {}
     if os.path.exists(MANIFEST_FILE):
@@ -179,21 +289,21 @@ def main():
                 manifest = json.load(f)
         except Exception:
             manifest = {}
-    manifest[f"{args.repo}/{args.file}"] = {
-        "repo": args.repo, "file": args.file, "rev": args.rev,
+    manifest[f"{repo}/{filename}"] = {
+        "repo": repo, "file": filename, "rev": rev,
         "source_url": source_url,
         "gofile_id": gf.get("id"), "gofile_code": gf.get("code"),
         "gofile_page": page, "gofile_parent": gf.get("parentFolder"),
-        "md5_gofile": gf_md5, "sha256": local_sha, "size": local_size,
+        "md5_gofile": gf_md5, "sha256": local_sha, "size": total,
         "mirrored_at": datetime.now().isoformat(timespec="seconds"),
         "last_verified": None, "downloads": 0,
     }
-    with open(MANIFEST_FILE, "w") as f:
-        json.dump(manifest, f, indent=2)
-
-    shutil.rmtree(STAGING_DIR, ignore_errors=True)  # never keep the model on the Pi
-    print(f"OK. Verified mirror recorded. Share: {page}")
-    print(f"Manifest: {MANIFEST_FILE}")
+    try:
+        with open(MANIFEST_FILE, "w") as f:
+            json.dump(manifest, f, indent=2)
+    except OSError as e:
+        print(f"(warn: could not write manifest: {e})")
+    print("OK. Recorded in manifest.")
 
 
 if __name__ == "__main__":

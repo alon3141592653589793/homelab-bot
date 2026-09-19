@@ -99,6 +99,13 @@ async def handle_reactive_command(client, message):
             pass
         await message.channel.send("Automatic updates RESUMED. Next weekly maintenance (Sun 03:00) will run apt upgrade + reboot as normal.")
 
+    elif raw.lower().startswith("/gofile "):
+        rest = raw[len("/gofile "):].strip()
+        if not rest:
+            await message.channel.send("Usage: /gofile <model>\nExample: /gofile ollama run hf.co/OBLITERATUS/Qwen3.8-27B-OBLITERATED:Q4_K_M\nOr: /gofile OWNER/REPO:TAG\nMirrors to Gofile, streamed through RAM (no whole-file buffering).")
+        else:
+            await run_script(message, "gofile_mirror.py", f"Mirroring {rest} -> Gofile (streamed)...", args=rest.split(), timeout=10800)
+
     elif raw.lower().startswith("/aidebug "):
         rest = raw[9:].strip()
         if rest:
@@ -198,6 +205,7 @@ async def handle_reactive_command(client, message):
             "/sync                 - Pull latest from the repo, reboot\n"
             "/sync no-reboot       - Same, but skip the reboot\n"
             "/sync dry-run         - Fetch + list what would change (no write, no reboot)\n"
+            "/gofile <model>       - Mirror a HF model to Gofile, streamed through RAM. e.g. /gofile ollama run hf.co/OWNER/REPO:Q4_K_M\n"
             "/syncinfo             - When GitHub repo was last updated + when /sync last ran\n"
             "\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\n"
             "/help                 - This message"
