@@ -23,6 +23,7 @@ import json
 import shutil
 import hashlib
 import subprocess
+import tempfile
 from datetime import datetime
 
 REPO_DIR = "/home/alon/secure-pi-bot"
@@ -266,6 +267,35 @@ def main():
     if root_failed:
         print("Aborting reboot -- fix the root install error and /sync again.")
         return
+
+    # Apply crontab as alon (no root needed -- crontab(1) for your own user
+    # needs no sudo). Always applied (idempotent); crontab(1) requires a
+    # trailing newline so normalize it. Moved out of the root installer so a
+    # crontab update never has to overwrite /usr/local/bin/pi_deploy_root.
+    cron_src = os.path.join(REPO_DIR, "src/lib/pi-bot/crontab.txt")
+    if os.path.isfile(cron_src):
+        with open(cron_src) as f:
+            cron = f.read()
+        if not cron.strip():
+            print("crontab.txt is empty -- skipping crontab apply.")
+        else:
+            if not cron.endswith("\n"):
+                cron += "\n"
+            fd, tmpc = tempfile.mkstemp(suffix=".cron")
+            try:
+                with os.fdopen(fd, "w") as tf:
+                    tf.write(cron)
+                r = subprocess.run(["crontab", tmpc], capture_output=True, text=True, timeout=30)
+                if r.returncode == 0:
+                    print("Applied crontab (alon).")
+                else:
+                    print("Crontab apply FAILED: " + (r.stderr or "").strip())
+            finally:
+                try:
+                    os.unlink(tmpc)
+                except OSError:
+                    pass
+
     if no_reboot:
         print("Skipping reboot (--no-reboot). Restart the bot by hand to load the new code.")
     else:

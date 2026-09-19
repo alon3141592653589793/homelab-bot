@@ -13,5 +13,6 @@ src/lib/pi-bot/root/pi-system-fixes.sh	/usr/local/bin/pi-system-fixes.sh
 src/lib/pi-bot/root/led_ctl.py	/usr/local/bin/led_ctl
 src/lib/pi-bot/root/pi_deploy_root.sh	/usr/local/bin/pi_deploy_root
 #
-# Crontab (applied as alon's crontab):
-src/lib/pi-bot/crontab.txt	@crontab
+# Crontab: applied directly by pi_deploy.py as alon (no root needed).
+# (previously @crontab here -- moved out so crontab updates don't touch the
+#  root installer, which can't overwrite itself safely mid-run)
