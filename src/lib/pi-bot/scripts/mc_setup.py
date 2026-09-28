@@ -168,16 +168,20 @@ def ensure_eula_and_props():
             f.write(f"{k}={v}\n")
 
 
-def _latest_modrinth_jar(slug):
+def _latest_modrinth_jar(slug, loaders=("paper", "spigot")):
     url = f"https://api.modrinth.com/v2/project/{slug}/version"
     req = urllib.request.Request(url, headers={"User-Agent": "pi-bot/mc-setup"})
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.load(r)
-    if not isinstance(data, list) or not data:
+    if not isinstance(data, list):
         return None, None
-    for f in data[0].get("files", []):
-        if f.get("filename", "").endswith(".jar"):
-            return f.get("url"), f.get("filename")
+    for ver in data:
+        vl = ver.get("loaders", []) or []
+        if loaders and not any(l in vl for l in loaders):
+            continue
+        for f in ver.get("files", []):
+            if f.get("filename", "").endswith(".jar"):
+                return f.get("url"), f.get("filename")
     return None, None
 
 
