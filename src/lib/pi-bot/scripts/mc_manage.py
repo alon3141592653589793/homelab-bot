@@ -100,7 +100,14 @@ def main():
         if screen_alive():
             print("already running (screen 'mc' alive)")
         else:
-            print(run(["screen", "-dmS", SCREEN, LAUNCH]) or "starting...")
+            run(["screen", "-dmS", SCREEN, LAUNCH])
+            time.sleep(6)
+            if screen_alive():
+                print("started (screen 'mc' alive) -- first boot generates the world (~30s)")
+            else:
+                # screen exited immediately -- run start.sh directly to surface the java error
+                err = run(["bash", LAUNCH], timeout=25)
+                print(f"failed to start (screen exited immediately). Direct run output:\n{err}")
     elif args.cmd == "stop":
         if send_console("stop"):
             print("sent 'stop' to console; waiting for graceful shutdown...")

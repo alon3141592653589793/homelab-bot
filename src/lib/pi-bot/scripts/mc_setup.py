@@ -66,9 +66,7 @@ def _semver_key(s):
     return key
 
 
-def pick_version(requested):
-    if requested:
-        return requested
+def _all_versions():
     data = fetch_json(PAPER_API)
     raw = data.get("versions", []) if isinstance(data, dict) else data
     cands = []
@@ -78,27 +76,39 @@ def pick_version(requested):
     elif isinstance(raw, list):
         cands = list(raw)
     cands = [v for v in cands if isinstance(v, str) and v[:1].isdigit()]
-    if not cands:
-        return None
     cands.sort(key=_semver_key)
-    return cands[-1]
+    return cands
 
 
-def latest_paper_build(mc_version):
-    data = fetch_json(f"{PAPER_API}/versions/{mc_version}/builds")
+def _stable_build(version):
+    data = fetch_json(f"{PAPER_API}/versions/{version}/builds")
     if isinstance(data, dict) and data.get("ok") is False:
-        return None, None, None
+        return None
     builds = data if isinstance(data, list) else (data.get("builds", []) if isinstance(data, dict) else [])
     stable = [b for b in builds if b.get("channel") == "STABLE"]
     if not stable:
-        stable = list(builds)
-    if not stable:
-        return None, None, None
+        return None
     pick = max(stable, key=lambda b: int(b.get("id", 0) or 0))
     dl_obj = (pick.get("downloads") or {}).get("server:default") or {}
     url = dl_obj.get("url")
-    fname = dl_obj.get("name") or (url.split("/")[-1] if url else "paper.jar")
+    if not url:
+        return None
+    fname = dl_obj.get("name") or url.split("/")[-1]
     return pick.get("id"), fname, url
+
+
+def latest_stable_paper(requested):
+    """Newest Paper version that has a STABLE build. Returns (version, build, fname, url)."""
+    if requested:
+        b = _stable_build(requested)
+        if not b:
+            return None, None, None, None
+        return requested, b[0], b[1], b[2]
+    for v in reversed(_all_versions()):
+        b = _stable_build(v)
+        if b:
+            return v, b[0], b[1], b[2]
+    return None, None, None, None
 
 
 def find_paper_jar():
@@ -174,15 +184,11 @@ def main():
         die("screen not found. sudo apt install -y screen")
     print("== picking Paper version ==")
     try:
-        mc_version = pick_version(args.version)
-        if not mc_version:
-            die("could not determine a Paper version")
-        print(f"  target: {mc_version}")
-
-        bnum, fname, dl = latest_paper_build(mc_version)
+        mc_version, bnum, fname, dl = latest_stable_paper(args.version)
         if not dl:
-            die(f"no Paper build found for {mc_version}")
-        print(f"  latest build: {bnum} -> {fname}")
+            die("no stable Paper build found for any version")
+        print(f"  target: {mc_version}")
+        print(f"  latest stable build: {bnum} -> {fname}")
 
         os.makedirs(MC_DIR, exist_ok=True)
         os.makedirs(PLUGINS, exist_ok=True)
