@@ -141,15 +141,44 @@ def ensure_eula_and_props():
         with open(eula, "w") as f:
             f.write("eula=true\n")
     sp = os.path.join(MC_DIR, "server.properties")
-    if not os.path.exists(sp):
-        with open(sp, "w") as f:
-            f.write("# Cross-play server (Java 25565, Bedrock via Geyser 19132)\n")
-            f.write("server-port=25565\n")
-            f.write("online-mode=true\n")
-            f.write("max-players=12\n")
-            f.write("motd=HomeLab cross-play server\n")
-            f.write("level-name=world\n")
-            f.write("# Floodgate lets Bedrock players join even with online-mode=true\n")
+    # Pi-friendly optimizations (added only if not already present, so user choices win)
+    defaults = {
+        "server-port": "25565",
+        "online-mode": "true",
+        "max-players": "12",
+        "motd": "HomeLab cross-play server",
+        "level-name": "world",
+        "view-distance": "4",
+        "simulation-distance": "4",
+        "network-compression-threshold": "256",
+    }
+    existing = {}
+    if os.path.exists(sp):
+        for line in open(sp):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                existing[k.strip()] = v
+    for k, v in defaults.items():
+        existing.setdefault(k, v)
+    with open(sp, "w") as f:
+        f.write("# Cross-play server (Java 25565, Bedrock via Geyser 19132)\n")
+        f.write("# Floodgate lets Bedrock players join even with online-mode=true\n")
+        for k, v in existing.items():
+            f.write(f"{k}={v}\n")
+
+
+def _latest_github_jar(repo):
+    url = f"https://api.github.com/repos/{repo}/releases/latest"
+    req = urllib.request.Request(url, headers={"User-Agent": "pi-bot/mc-setup",
+                                                "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = json.load(r)
+    for a in data.get("assets", []):
+        name = a.get("name", "")
+        if name.endswith(".jar"):
+            return a.get("browser_download_url"), name
+    return None, None
 
 
 def install_plugins():
@@ -162,6 +191,16 @@ def install_plugins():
             download(url, dest)
         except Exception as e:
             print(f"  WARNING: could not download {name}: {e}")
+    # Chunky: pre-generate the world so exploring doesn't cause lag spikes (big Pi win)
+    try:
+        url, fname = _latest_github_jar("pop4959/Chunky")
+        if url:
+            print(f"  installing Chunky (world pre-generation) -> {fname}")
+            download(url, os.path.join(PLUGINS, "Chunky.jar"))
+        else:
+            print("  WARNING: Chunky latest jar not found in release assets")
+    except Exception as e:
+        print(f"  WARNING: could not download Chunky: {e}")
 
 
 def main():
@@ -172,14 +211,36 @@ def main():
 
     print("== checks ==")
     if not have("java"):
-        die("java not found. MC 1.21 needs JDK 21, which is NOT in RPi OS bookworm. Install Azul Zulu 21 (arm64):\n"
+        die("java not found. Paper 26.x needs JDK 25, which is NOT in RPi OS bookworm. Install Azul Zulu 25 (arm64):\n"
             "  sudo apt install -y gnupg ca-certificates curl screen\n"
             "  curl -s https://repos.azul.com/azul-repo.key | sudo gpg --dearmor -o /usr/share/keyrings/azul.gpg\n"
             "  echo 'deb [signed-by=/usr/share/keyrings/azul.gpg] https://repos.azul.com/zulu/deb stable main' | sudo tee /etc/apt/sources.list.d/zulu.list\n"
             "  sudo chmod 644 /usr/share/keyrings/azul.gpg\n"
-            "  sudo apt update && sudo apt install -y zulu21-ca-jre-headless\n"
-            "  java -version   # should print 21.x\n"
+            "  sudo apt update && sudo apt install -y zulu25-ca-jre-headless\n"
+            "  java -version   # should print 25.x\n"
             "then re-run: /mc setup")
+    else:
+        # Paper 26.x requires Java 25+; verify the installed java is new enough
+        try:
+            jout = subprocess.run(["java", "-version"], capture_output=True, text=True, timeout=10)
+            ver_lines = (jout.stderr or jout.stdout or "").strip().splitlines()
+            ver_str = ver_lines[0] if ver_lines else ""
+            first = ver_str.split('"')[1] if '"' in ver_str else "0"
+            major = int(first.split(".")[0]) if first.split(".")[0].isdigit() else 0
+            if major < 25:
+                die(f"java found but too old (Paper 26.x needs Java 25+, got Java {major}). Detected:\n{ver_str}\n\n"
+                    "Upgrade to Azul Zulu 25 (arm64):\n"
+                    "  curl -s https://repos.azul.com/azul-repo.key | sudo gpg --dearmor -o /usr/share/keyrings/azul.gpg\n"
+                    "  echo 'deb [signed-by=/usr/share/keyrings/azul.gpg] https://repos.azul.com/zulu/deb stable main' | sudo tee /etc/apt/sources.list.d/zulu.list\n"
+                    "  sudo chmod 644 /usr/share/keyrings/azul.gpg\n"
+                    "  sudo apt update && sudo apt install -y zulu25-ca-jre-headless\n"
+                    "  # if you had Zulu 21, remove it so 'java' resolves to 25:\n"
+                    "  sudo apt remove -y zulu21-ca-jre-headless\n"
+                    "  sudo update-alternatives --set java /usr/lib/jvm/zulu-25/bin/java  # only if 'java -version' still shows 21\n"
+                    "  java -version   # should print 25.x\n"
+                    "then re-run: /mc setup")
+        except Exception:
+            pass
     if not have("screen"):
         die("screen not found. sudo apt install -y screen")
     print("== picking Paper version ==")
@@ -212,6 +273,11 @@ def main():
     print("== config ==")
     ensure_eula_and_props()
     write_launch(args.heap)
+    print("  optimizations: view-distance=4, simulation-distance=4, network-compression=256 (Pi-friendly)")
+    print("  Chunky plugin ready -> after first start, pre-generate the world to avoid lag spikes:")
+    print("       /mc cmd chunky world world")
+    print("       /mc cmd chunky radius 2000")
+    print("       /mc cmd chunky start")
 
     print("\nDONE. Next:")
     print("  1) /mc start   (auto-starts on reboot via crontab after the next /sync)")
