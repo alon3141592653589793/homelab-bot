@@ -6,6 +6,7 @@ Wraps the USER systemd service 'minecraft.service' and the screen session 'mc'.
 Sub-commands:
   start | stop | restart | status | log [N] | console "<command...>" | players
   backup | tunnels | tunnels set <java-addr:port> <bedrock-addr:port>
+  24/7 [on|off]                      # auto-restart the server if it dies (cron watchdog)
   update [--version V] [--heap H]    # re-run setup (latest Paper + Geyser + Floodgate)
 """
 import os
@@ -25,6 +26,7 @@ OPS_FILE = os.path.join(MC_DIR, "ops.json")
 BACKUP_DIR = os.path.expanduser("~/mc-backups")
 LOG = os.path.join(MC_DIR, "logs", "latest.log")
 SETUP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mc_setup.py")
+MARKER_247 = os.path.join(MC_DIR, ".auto_restart")
 
 
 def run(cmd, timeout=60):
@@ -170,6 +172,7 @@ def main():
     p_tun.add_argument("set", nargs="?")
     p_tun.add_argument("java", nargs="?")
     p_tun.add_argument("bedrock", nargs="?")
+    p_247 = sub.add_parser("24/7"); p_247.add_argument("mode", nargs="?")
     p_upd = sub.add_parser("update"); p_upd.add_argument("--version"); p_upd.add_argument("--heap")
     args = ap.parse_args()
 
@@ -221,6 +224,7 @@ def main():
         if t:
             print(f"java tunnel:   {t.get('java','?')}")
             print(f"bedrock tunnel: {t.get('bedrock','?')}")
+        print(f"24/7 auto-restart: {'ON' if os.path.exists(MARKER_247) else 'off'}  (/mc 24/7 on|off)")
     elif args.cmd == "ip":
         import socket
         lan = "127.0.0.1"
@@ -354,6 +358,28 @@ def main():
                 print(f"bedrock:  {t.get('bedrock','?')}  (share with Bedrock players)")
             else:
                 print("no tunnels set. Usage: tunnels set <java-addr:port> <bedrock-addr:port>")
+    elif args.cmd == "24/7":
+        WATCHDOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mc_watchdog.py")
+        on = args.mode in (None, "on", "status")
+        if args.mode == "off":
+            if os.path.exists(MARKER_247):
+                os.remove(MARKER_247)
+                print("24/7 auto-restart: OFF (server will no longer auto-restart if it dies)")
+            else:
+                print("24/7 auto-restart: already off")
+        elif args.mode in ("on", None):
+            os.makedirs(MC_DIR, exist_ok=True)
+            with open(MARKER_247, "w") as f:
+                f.write("on\n")
+            print("24/7 auto-restart: ON (watchdog restarts the server if it dies, skips maintenance/testall)")
+            print("  cron runs every 2 min -> /dev/shm/pi-bot/mc_watchdog.log")
+            if not screen_alive():
+                print("  (server is down right now -- it will start within ~2 min, or run /mc start)")
+        else:
+            print("Usage: 24/7 [on|off|status]")
+        if args.mode in (None, "status"):
+            print(f"  marker: {'set' if os.path.exists(MARKER_247) else 'not set'}  ({MARKER_247})")
+            print(f"  watchdog script: {WATCHDOG}")
     elif args.cmd == "update":
         cmd = ["python3", "-u", SETUP]
         if args.version:

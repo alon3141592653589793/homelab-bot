@@ -42,6 +42,7 @@ async def handle_minecraft_command(client, message):
             "/mc deop <player> - Remove operator status\n"
             "/mc ops         - List current operators\n"
             "/mc backup      - Tar the world(s) to ~/mc-backups (keeps last 5)\n"
+            "/mc 24/7 [on|off]- Auto-restart the server if it dies (skips maintenance + /testall)\n"
             "/mc setup       - First-time install OR update (latest Paper + Geyser + Floodgate), then /mc restart\n"
             "/mc update      - Same as /mc setup\n"
             "/mc tunnels     - Show the playit.gg tunnel addresses\n"
@@ -100,6 +101,10 @@ async def handle_minecraft_command(client, message):
         await _run(message, ["update"], "Minecraft Setup/Update", timeout=600)
     elif c == "/mc tunnels":
         await _run(message, ["tunnels"], "Minecraft Tunnels")
+    elif c in ("/mc 24/7", "/mc 24/7 status", "/mc 24/7 on", "/mc 24/7 off"):
+        mode = content.split()[-1].lower() if len(content.split()) > 2 else None
+        sub = ["24/7"] + ([mode] if mode in ("on", "off") else [])
+        await _run(message, sub, "Minecraft 24/7", timeout=20)
     elif c.startswith("/mc tunnels set "):
         rest = raw[len("/mc tunnels set "):].strip().split()
         if len(rest) >= 2:

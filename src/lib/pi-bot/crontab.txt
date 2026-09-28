@@ -7,6 +7,11 @@
 # Auto-start the Minecraft server on boot (only if ~/mc-server/start.sh exists)
 @reboot [ -x /home/alon/mc-server/start.sh ] && screen -dmS mc /home/alon/mc-server/start.sh >> /dev/shm/pi-bot/mc_autostart.log 2>&1
 
+# Minecraft 24/7 watchdog (every 2 min). Only restarts if .auto_restart marker
+# is set (/mc 24/7 on). Skips during maintenance + /testall so it never fights
+# the nightly reboot or the test suite.
+*/2 * * * * python3 /home/alon/secure-pi-bot/scripts/mc_watchdog.py
+
 # CPU profile auto-switcher (instant exit if no change needed)
 * * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
 
