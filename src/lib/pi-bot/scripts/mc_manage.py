@@ -85,6 +85,7 @@ def main():
     sub.add_parser("stop")
     sub.add_parser("restart")
     sub.add_parser("status")
+    sub.add_parser("ip")
     p_log = sub.add_parser("log"); p_log.add_argument("n", nargs="?", type=int, default=30)
     p_con = sub.add_parser("console"); p_con.add_argument("line", nargs="+")
     sub.add_parser("players")
@@ -139,6 +140,36 @@ def main():
         if t:
             print(f"java tunnel:   {t.get('java','?')}")
             print(f"bedrock tunnel: {t.get('bedrock','?')}")
+    elif args.cmd == "ip":
+        import socket
+        lan = "127.0.0.1"
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan = s.getsockname()[0]
+            s.close()
+        except Exception:
+            try:
+                lan = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5).stdout.split()[0]
+            except Exception:
+                pass
+        alive = screen_alive()
+        print("=== How to join the Minecraft server ===")
+        print(f"server: {'RUNNING' if alive else 'STOPPED'}  (start it with /mc start)\n")
+        print("LOCAL / SAME WIFI:")
+        print(f"  Java edition   -> add server: {lan}:25565")
+        print(f"  Bedrock edition -> add server: {lan} , port 19132  (via Geyser)\n")
+        t = read_tunnels()
+        if t.get("java") or t.get("bedrock"):
+            print("REMOTE / CROSS-PLAY (playit.gg tunnels):")
+            print(f"  Java players:    {t.get('java','?')}")
+            print(f"  Bedrock players: {t.get('bedrock','?')}")
+            print("  CNAME your domain -> the java tunnel address")
+        else:
+            print("REMOTE / CROSS-PLAY: no tunnels set yet.")
+            print("  1) Install playit.gg (see /mc setup output)")
+            print("  2) Add a Java (TCP 25565) + Bedrock (UDP 19132) tunnel in the playit dashboard")
+            print("  3) /mc tunnels set <java-addr:port> <bedrock-addr:port>")
     elif args.cmd == "log":
         print(tail(LOG, args.n))
     elif args.cmd == "console":

@@ -33,6 +33,7 @@ async def handle_minecraft_command(client, message):
             "/mc stop        - Graceful stop (sends 'stop' to the console)\n"
             "/mc restart     - Restart the server\n"
             "/mc status      - Service state, screen session, paper jar, tunnels\n"
+            "/mc ip          - Show the server IP / how to join (Java + Bedrock)\n"
             "/mc players     - Who's online right now\n"
             "/mc log [N]     - Last N lines of the server log (default 30)\n"
             "/mc say <text>  - Broadcast a message in-game\n"
@@ -54,6 +55,8 @@ async def handle_minecraft_command(client, message):
         await _run(message, ["restart"], "Minecraft Restart", timeout=60)
     elif c == "/mc status":
         await _run(message, ["status"], "Minecraft Status")
+    elif c == "/mc ip":
+        await _run(message, ["ip"], "Minecraft IP / How to Join")
     elif c == "/mc players":
         await _run(message, ["players"], "Players Online", timeout=15)
     elif c.startswith("/mc log"):
