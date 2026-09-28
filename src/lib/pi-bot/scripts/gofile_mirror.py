@@ -204,7 +204,7 @@ def resolve_file(repo, rev, tag, explicit_file):
     return None, None, None
 
 
-def stream_to_gofile(source_url, token, fname, folder_id=None, size_acc=None):
+def stream_to_gofile(source_url, token, fname, folder_id=None, size_acc=None, proxies=None):
     """Download source_url and upload to Gofile in one streamed pass.
     RAM stays ~pipe size. Returns (sha256_hex, bytes, gofile_response_dict) or
     raises on fatal error. size_acc (a [int] list) is mutated live so an
@@ -232,7 +232,7 @@ def stream_to_gofile(source_url, token, fname, folder_id=None, size_acc=None):
 
     def downloader():
         try:
-            with requests.get(source_url, stream=True, timeout=120) as resp:
+            with requests.get(source_url, stream=True, timeout=120, proxies=proxies) as resp:
                 resp.raise_for_status()
                 for chunk in resp.iter_content(chunk_size=CHUNK):
                     if stop.is_set():
@@ -308,6 +308,9 @@ def main():
     ap.add_argument("--retry", default=str(MAX_RETRY))
     ap.add_argument("--progress", type=int, default=None, help="progress report interval in minutes (Discord)")
     ap.add_argument("--channel", default=None, help="Discord channel id to report to")
+    ap.add_argument("--url", default=None, help="direct download URL (skips HuggingFace resolution)")
+    ap.add_argument("--filename", default=None, help="override filename for --url downloads")
+    ap.add_argument("--tor", action="store_true", help="download the source through Tor SOCKS5 at 127.0.0.1:9050")
     args = ap.parse_args()
 
     token = load_token()
@@ -324,34 +327,50 @@ def main():
         else:
             print(text)
 
-    if args.repo and args.file:
-        repo, filename, rev = args.repo, args.file, args.rev
+    from urllib.parse import urlparse
+
+    def _is_url(s):
+        return s.lower().startswith(("http://", "https://"))
+
+    direct_url = args.url or (args.ref[0] if args.ref and _is_url(args.ref[0]) else None)
+    if direct_url:
+        # Any direct download link -- skip HuggingFace tree resolution entirely.
+        source_url = direct_url
+        filename = args.filename or (os.path.basename(urlparse(source_url).path) or "download.bin")
+        repo, rev = "(direct)", ""
+        hf_sha, hf_size = None, None
     else:
-        repo, tag, explicit = parse_ref(args.ref)
-        if not repo:
-            report("Usage: /gofile [minutes] ollama run hf.co/OWNER/REPO:TAG  (or OWNER/REPO:TAG)")
-            sys.exit(1)
-        filename, hf_size, hf_sha = resolve_file(repo, args.rev, tag, explicit)
-        if not filename:
-            sys.exit(1)
-        rev = args.rev
+        if args.repo and args.file:
+            repo, filename, rev = args.repo, args.file, args.rev
+        else:
+            repo, tag, explicit = parse_ref(args.ref)
+            if not repo:
+                report("Usage: /gofile [minutes] [tor] ollama run hf.co/OWNER/REPO:TAG  (or a direct https:// URL)")
+                sys.exit(1)
+            filename, hf_size, hf_sha = resolve_file(repo, args.rev, tag, explicit)
+            if not filename:
+                sys.exit(1)
+            rev = args.rev
 
-    source_url = f"{HF_BASE}/{repo}/resolve/{rev}/{filename}"
-    hf_sha = None
-    hf_size = None
-    try:
-        mr = proxy_pool.get(f"{HF_BASE}/api/models/{repo}/tree/{rev}", timeout=30)
-        if mr.status_code == 200:
-            for e in mr.json():
-                if e.get("path") == filename:
-                    lfs = e.get("lfs") or {}
-                    hf_sha = lfs.get("oid")
-                    hf_size = e.get("size")
-                    break
-    except Exception:
-        pass
+        source_url = f"{HF_BASE}/{repo}/resolve/{rev}/{filename}"
+        hf_sha = None
+        hf_size = None
+        try:
+            mr = proxy_pool.get(f"{HF_BASE}/api/models/{repo}/tree/{rev}", timeout=30)
+            if mr.status_code == 200:
+                for e in mr.json():
+                    if e.get("path") == filename:
+                        lfs = e.get("lfs") or {}
+                        hf_sha = lfs.get("oid")
+                        hf_size = e.get("size")
+                        break
+        except Exception:
+            pass
 
-    report(f"Mirroring {repo}/{filename} -> Gofile (streamed, RAM-only)")
+    if repo == "(direct)":
+        report(f"Mirroring {source_url} -> Gofile (streamed, RAM-only)")
+    else:
+        report(f"Mirroring {repo}/{filename} -> Gofile (streamed, RAM-only)")
     report(f"Size: {hf_size} bytes" if hf_size else "Size: (unknown)")
 
     t0 = time.time()
@@ -373,10 +392,20 @@ def main():
                 post_channel(channel, line, dtoken)
         threading.Thread(target=progress_loop, daemon=True).start()
 
+    tor_proxies = None
+    if args.tor:
+        try:
+            import socks  # noqa: F401 -- ensures PySocks is installed for socks5h support
+        except ImportError:
+            report("FAILURE: --tor needs PySocks. pip3 install --user 'requests[socks]'")
+            sys.exit(1)
+        tor_proxies = {"http": "socks5h://127.0.0.1:9050", "https": "socks5h://127.0.0.1:9050"}
+        report("Routing the source download through Tor (127.0.0.1:9050). Upload to Gofile stays direct.")
+
     signal.signal(signal.SIGTERM, _sigterm)
     _write_active(repo, filename)
     try:
-        local_sha, total, gf = stream_to_gofile(source_url, token, filename, folder_id=args.folder, size_acc=size_acc)
+        local_sha, total, gf = stream_to_gofile(source_url, token, filename, folder_id=args.folder, size_acc=size_acc, proxies=tor_proxies)
     except Exception as e:
         stop_ev.set()
         _clear_active()
@@ -425,7 +454,7 @@ def main():
             json.dump(manifest, f, indent=2)
     except OSError:
         pass
-    if _auto_keepalive(repo):
+    if repo != "(direct)" and _auto_keepalive(repo):
         report(f"Auto-opted {repo} into keep-alive (6h cron fake-pulls it so Gofile won't delete it). /gofile forget {repo} to stop.")
     if channel:
         print("Done — summary posted in channel.")

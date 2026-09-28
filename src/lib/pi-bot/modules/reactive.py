@@ -264,12 +264,18 @@ async def handle_reactive_command(client, message):
         progress = None
         if tokens and tokens[0].isdigit():
             progress = tokens.pop(0)
+        use_tor = False
+        if tokens and tokens[0].lower() == "tor":
+            use_tor = True
+            tokens.pop(0)
         if not tokens:
-            await message.channel.send("Usage: /gofile [minutes] <model>\nExample: /gofile 10 ollama run hf.co/OBLITERATUS/Qwen3.8-27B-OBLITERATED:Q4_K_M\n(minutes = progress report interval; always reports start/fail/done)")
+            await message.channel.send("Usage: /gofile [minutes] [tor] <model-or-URL>\nExamples:\n  /gofile 10 ollama run hf.co/OWNER/REPO:Q4_K_M\n  /gofile https://example.com/file.bin\n  /gofile 5 tor https://example.com/file.bin\n(minutes = progress interval; tor = download source through Tor; always reports start/fail/done)")
         else:
             args = []
             if progress is not None:
                 args += ["--progress", progress]
+            if use_tor:
+                args += ["--tor"]
             args += ["--channel", str(message.channel.id)]
             args += tokens
             await run_script(message, "gofile_mirror.py", "", args=args, timeout=10800)
@@ -385,7 +391,7 @@ async def handle_reactive_command(client, message):
             "/sync                 - Pull latest from the repo, reboot\n"
             "/sync no-reboot       - Same, but skip the reboot\n"
             "/sync dry-run         - Fetch + list what would change (no write, no reboot)\n"
-            "/gofile [min] <model>  - Mirror a HF model to Gofile (streamed, RAM-only). [min] = progress interval. e.g. /gofile 10 ollama run hf.co/OWNER/REPO:Q4_K_M\n"
+            "/gofile [min] [tor] <model|URL>  - Mirror a HF model OR any direct URL to Gofile (streamed, RAM-only). [min] = progress interval; [tor] = download via Tor. e.g. /gofile 10 ollama run hf.co/OWNER/REPO:Q4_K_M | /gofile tor https://x/f.bin\n"
             "/syncinfo             - When GitHub repo was last updated + when /sync last ran\n"
             "\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\n"
             "/help                 - This message"
