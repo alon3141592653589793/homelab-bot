@@ -157,12 +157,12 @@ def main():
 
     print("== checks ==")
     if not have("java"):
-        die("java not found. MC 1.21 needs JDK 21, which is NOT in RPi OS bookworm. Install Azul Zulu 21 (works on arm32 + arm64):\n"
-            "  sudo apt install -y gnupg ca-certificates wget screen\n"
-            "  sudo mkdir -p /etc/apt/keyrings\n"
-            "  wget -qO - https://repos.azul.com/azul-bin-public-install.key | sudo gpg --dearmor -o /etc/apt/keyrings/azul.gpg\n"
-            "  echo 'deb [signed-by=/etc/apt/keyrings/azul.gpg] https://repos.azul.com/zulu-apt stable main' | sudo tee /etc/apt/sources.list.d/zulu.list\n"
-            "  sudo apt update && sudo apt install -y zulu21-jdk-headless\n"
+        die("java not found. MC 1.21 needs JDK 21, which is NOT in RPi OS bookworm. Install Azul Zulu 21 (arm64):\n"
+            "  sudo apt install -y gnupg ca-certificates curl screen\n"
+            "  curl -s https://repos.azul.com/azul-repo.key | sudo gpg --dearmor -o /usr/share/keyrings/azul.gpg\n"
+            "  echo 'deb [signed-by=/usr/share/keyrings/azul.gpg] https://repos.azul.com/zulu/deb stable main' | sudo tee /etc/apt/sources.list.d/zulu.list\n"
+            "  sudo chmod 644 /usr/share/keyrings/azul.gpg\n"
+            "  sudo apt update && sudo apt install -y zulu21-ca-jre-headless\n"
             "  java -version   # should print 21.x\n"
             "then re-run: /mc setup")
     if not have("screen"):
