@@ -110,6 +110,46 @@ def tail(path, n=30):
         return "(no log)"
 
 
+CHUNKY_MARKER = os.path.join(MC_DIR, ".chunky_configured")
+
+
+def _chunky_loaded(timeout=60):
+    """Wait until the Chunky plugin has enabled in the server log."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if not screen_alive():
+            return False
+        try:
+            with open(LOG) as f:
+                txt = f.read().lower()
+            if "chunky" in txt and ("enabled" in txt or "loading" in txt):
+                return True
+        except OSError:
+            pass
+        time.sleep(3)
+    return False
+
+
+def auto_chunky():
+    """After the server boots, configure Chunky once then resume pre-gen every start."""
+    if not os.path.exists(os.path.join(PLUGINS, "Chunky.jar")):
+        return  # not installed -> nothing to do
+    if not _chunky_loaded(timeout=60):
+        return  # plugin never reported ready; skip silently
+    if os.path.exists(CHUNKY_MARKER):
+        # already configured in a previous boot -> just resume any paused task
+        send_console("chunky continue")
+        return
+    send_console("chunky world world")
+    time.sleep(1)
+    send_console("chunky radius 2000")
+    time.sleep(1)
+    send_console("chunky start")
+    os.makedirs(MC_DIR, exist_ok=True)
+    with open(CHUNKY_MARKER, "w") as f:
+        f.write("configured\n")
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd")
@@ -140,6 +180,8 @@ def main():
             time.sleep(6)
             if screen_alive():
                 print("started (screen 'mc' alive) -- first boot generates the world (~30s)")
+                # auto-resume Chunky world pre-generation (configures once on first boot)
+                auto_chunky()
             else:
                 # screen exited immediately -- run start.sh directly to surface the java error
                 err = run(["bash", LAUNCH], timeout=25)
@@ -165,6 +207,9 @@ def main():
             if screen_alive():
                 run(["screen", "-S", SCREEN, "-X", "quit"])
         print(run(["screen", "-dmS", SCREEN, LAUNCH]) or "restarted")
+        time.sleep(6)
+        if screen_alive():
+            auto_chunky()
     elif args.cmd == "status":
         alive = screen_alive()
         print(f"server: {'running' if alive else 'stopped'}")

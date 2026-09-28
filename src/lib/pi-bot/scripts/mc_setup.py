@@ -278,10 +278,8 @@ def main():
     ensure_eula_and_props()
     write_launch(args.heap)
     print("  optimizations: view-distance=4, simulation-distance=4, network-compression=256 (Pi-friendly)")
-    print("  Chunky plugin ready -> after first start, pre-generate the world to avoid lag spikes:")
-    print("       /mc cmd chunky world world")
-    print("       /mc cmd chunky radius 2000")
-    print("       /mc cmd chunky start")
+    print("  Chunky pre-generation is AUTO: /mc start configures it once (world=world, radius=2000)")
+    print("  and resumes on every later restart -- no manual /mc cmd needed.")
 
     print("\nDONE. Next:")
     print("  1) /mc start   (auto-starts on reboot via crontab after the next /sync)")
