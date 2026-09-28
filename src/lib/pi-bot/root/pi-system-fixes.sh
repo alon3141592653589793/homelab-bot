@@ -35,5 +35,25 @@ for s in ssh.service AdGuardHome.service; do
     "$(systemctl is-enabled "$s" 2>/dev/null || echo n/a)" \
     "$(systemctl is-active "$s" 2>/dev/null || echo n/a)"
 done
+
+echo "=== 4. Guard rc.local ondemand governor writes ==="
+# rc.local hardcodes an ondemand up_threshold write. Under the powersave
+# governor that path doesn't exist -> rc-local.service crashes (exit 2).
+# Wrap the bare line in an existence check so it only runs when ondemand is
+# active. Idempotent: skips if already guarded.
+if [ -f /etc/rc.local ]; then
+  if grep -qE 'echo [0-9]+ > /sys/devices/system/cpu/cpufreq/ondemand/up_threshold' /etc/rc.local \
+     && ! grep -qF 'if [ -d "/sys/devices/system/cpu/cpufreq/ondemand"' /etc/rc.local; then
+    cp /etc/rc.local "/etc/rc.local.bak.$(date +%s)"
+    sed -i -E 's|^echo [0-9]+ > /sys/devices/system/cpu/cpufreq/ondemand/up_threshold.*|if [ -d "/sys/devices/system/cpu/cpufreq/ondemand" ]; then\n  echo 95 > /sys/devices/system/cpu/cpufreq/ondemand/up_threshold\nfi|' /etc/rc.local
+    echo "  -> guarded the ondemand up_threshold line (backup saved)."
+  else
+    echo "  -> rc.local already guarded or no bare ondemand line."
+  fi
+  systemctl restart rc-local.service 2>/dev/null && echo "  -> rc-local.service restarted." || true
+else
+  echo "  -> /etc/rc.local not present; nothing to patch."
+fi
+
 echo "Done."
 echo "Then reboot and use the /boot Discord command to confirm both services came back."

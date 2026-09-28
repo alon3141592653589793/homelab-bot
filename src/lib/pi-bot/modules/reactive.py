@@ -243,6 +243,9 @@ async def handle_reactive_command(client, message):
         except OSError:
             await message.channel.send("No models opted in for keep-alive yet.")
 
+    elif content == "/gofile check":
+        await run_script(message, "gofile_check.py", "Checking which Gofile mirrors are still alive...", timeout=120)
+
     elif raw.lower().startswith("/setlocation "):
         loc = raw[len("/setlocation "):].strip()
         await run_script(message, "pikud_alerts.py", "", args=["--set-location", loc], timeout=15)
@@ -371,10 +374,11 @@ async def handle_reactive_command(client, message):
             "\n== Proxy ==\n"
             "/proxy                 - Proxy pool status\n"
             "/proxy refresh         - Re-fetch + test free proxies\n"
-            "\n== Gofile keep-alive ==\n"
+            "\n== Gofile ==\n"
             "/gofile keep <ref>     - Opt a mirror into auto keep-alive (fake-download every 6h)\n"
             "/gofile forget <ref>   - Stop maintaining a mirror\n"
             "/gofile keeplist       - List maintained mirrors\n"
+            "/gofile check          - Ping Gofile to see which mirrored files are still alive\n"
             "\n== Advanced ==\n"
             "/aidebug <question>   - Conversational AI diagnostic (optional: model prefix)\n"
             "/sync                 - Pull latest from the repo, reboot\n"
