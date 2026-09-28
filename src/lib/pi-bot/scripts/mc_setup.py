@@ -30,8 +30,6 @@ GEYSER_JAR = "https://download.geysermc.org/v2/projects/geyser/versions/latest/b
 FLOODGATE_JAR = "https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot"
 HEAP_FILE = os.path.join(MC_DIR, ".heap")
 LAUNCH = os.path.join(MC_DIR, "start.sh")
-UNIT_DIR = os.path.expanduser("~/.config/systemd/user")
-UNIT = os.path.join(UNIT_DIR, "minecraft.service")
 
 DEFAULT_HEAP = "1024M"
 
@@ -87,7 +85,7 @@ def find_paper_jar():
         return None
 
 
-def write_launch_and_unit(heap):
+def write_launch(heap):
     os.makedirs(MC_DIR, exist_ok=True)
     with open(HEAP_FILE, "w") as f:
         f.write(heap)
@@ -100,23 +98,7 @@ def write_launch_and_unit(heap):
         f.write(f"exec java -Xms{heap} -Xmx{heap} -XX:+UseG1GC -jar {paper_jar} nogui\n")
     os.chmod(LAUNCH, 0o755)
 
-    os.makedirs(UNIT_DIR, exist_ok=True)
-    with open(UNIT, "w") as f:
-        f.write("[Unit]\n")
-        f.write("Description=Minecraft (Paper + Geyser) cross-play server\n")
-        f.write("After=network-online.target\n\n")
-        f.write("[Service]\n")
-        f.write("Type=forking\n")
-        f.write(f"WorkingDirectory={MC_DIR}\n")
-        f.write(f"ExecStart=/usr/bin/screen -dmS mc {LAUNCH}\n")
-        f.write("ExecStop=/usr/bin/screen -S mc -p 0 -X stuff 'stop\\n'\n")
-        f.write("TimeoutStopSec=40\n")
-        f.write("Restart=on-failure\n")
-        f.write("RestartSec=10\n\n")
-        f.write("[Install]\n")
-        f.write("WantedBy=default.target\n")
-    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
-    print("  wrote start.sh + user systemd unit (minecraft.service)")
+    print("  wrote start.sh (run via: screen -dmS mc start.sh  -- managed directly, no systemd)")
 
 
 def ensure_eula_and_props():
@@ -167,9 +149,6 @@ def main():
             "then re-run: /mc setup")
     if not have("screen"):
         die("screen not found. sudo apt install -y screen")
-    user = os.environ.get("USER") or os.path.basename(os.path.expanduser("~"))
-    subprocess.run(["loginctl", "enable-linger", user], capture_output=True, timeout=10)
-
     print("== picking Paper version ==")
     mc_version = pick_version(args.version)
     if not mc_version:
@@ -200,10 +179,10 @@ def main():
 
     print("== config ==")
     ensure_eula_and_props()
-    write_launch_and_unit(args.heap)
+    write_launch(args.heap)
 
     print("\nDONE. Next:")
-    print("  1) /mc start   (or: systemctl --user enable --now minecraft.service)")
+    print("  1) /mc start   (auto-starts on reboot via crontab after the next /sync)")
     print("  2) Install playit.gg (one time):")
     print("       curl -SsL https://playit-cloud.github.io/ppa/key.gpg | sudo tee /etc/apt/trusted.gpg.d/playit.gpg")
     print("       echo 'deb https://playit-cloud.github.io/ppa assets/' | sudo tee /etc/apt/sources.list.d/playit.list")

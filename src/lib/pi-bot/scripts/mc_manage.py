@@ -17,8 +17,8 @@ import argparse
 import subprocess
 
 MC_DIR = os.path.expanduser("~/mc-server")
-UNIT = "minecraft.service"
 SCREEN = "mc"
+LAUNCH = os.path.join(MC_DIR, "start.sh")
 TUNNELS_FILE = os.path.join(MC_DIR, ".tunnels")
 BACKUP_DIR = os.path.expanduser("~/mc-backups")
 LOG = os.path.join(MC_DIR, "logs", "latest.log")
@@ -97,7 +97,10 @@ def main():
     args = ap.parse_args()
 
     if args.cmd == "start":
-        print(run(["systemctl", "--user", "start", UNIT]) or "starting...")
+        if screen_alive():
+            print("already running (screen 'mc' alive)")
+        else:
+            print(run(["screen", "-dmS", SCREEN, LAUNCH]) or "starting...")
     elif args.cmd == "stop":
         if send_console("stop"):
             print("sent 'stop' to console; waiting for graceful shutdown...")
@@ -105,14 +108,24 @@ def main():
                 if not screen_alive():
                     break
                 time.sleep(2)
-            run(["systemctl", "--user", "stop", UNIT])
+            if screen_alive():
+                run(["screen", "-S", SCREEN, "-X", "quit"])
+            print("stopped")
         else:
-            print(run(["systemctl", "--user", "stop", UNIT]) or "stopped")
+            print("not running")
     elif args.cmd == "restart":
-        print(run(["systemctl", "--user", "restart", UNIT]) or "restarted")
+        if send_console("stop"):
+            for _ in range(30):
+                if not screen_alive():
+                    break
+                time.sleep(2)
+            if screen_alive():
+                run(["screen", "-S", SCREEN, "-X", "quit"])
+        print(run(["screen", "-dmS", SCREEN, LAUNCH]) or "restarted")
     elif args.cmd == "status":
-        print(f"service: {run(['systemctl','--user','is-active',UNIT])}")
-        print(f"screen session: {'alive' if screen_alive() else 'no'}")
+        alive = screen_alive()
+        print(f"server: {'running' if alive else 'stopped'}")
+        print(f"screen session: {'alive' if alive else 'no'}")
         print(f"paper: {paper_jar() or '(none)'}")
         print(f"java: {'ok' if shutil.which('java') else 'MISSING'}")
         t = read_tunnels()
