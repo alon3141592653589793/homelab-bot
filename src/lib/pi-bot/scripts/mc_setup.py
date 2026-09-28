@@ -150,23 +150,26 @@ def main():
     if not have("screen"):
         die("screen not found. sudo apt install -y screen")
     print("== picking Paper version ==")
-    mc_version = pick_version(args.version)
-    if not mc_version:
-        die("could not determine a Paper version")
-    print(f"  target: {mc_version}")
-
-    bnum, fname, dl = latest_paper_build(mc_version)
-    if not dl:
-        die(f"no Paper build found for {mc_version}")
-    print(f"  latest build: {bnum} -> {fname}")
-
-    os.makedirs(MC_DIR, exist_ok=True)
-    os.makedirs(PLUGINS, exist_ok=True)
-    print("== downloading Paper ==")
     try:
+        mc_version = pick_version(args.version)
+        if not mc_version:
+            die("could not determine a Paper version")
+        print(f"  target: {mc_version}")
+
+        bnum, fname, dl = latest_paper_build(mc_version)
+        if not dl:
+            die(f"no Paper build found for {mc_version}")
+        print(f"  latest build: {bnum} -> {fname}")
+
+        os.makedirs(MC_DIR, exist_ok=True)
+        os.makedirs(PLUGINS, exist_ok=True)
+        print("== downloading Paper ==")
         download(dl, os.path.join(MC_DIR, fname))
+    except SystemExit:
+        raise
     except Exception as e:
-        die(f"Paper download failed: {e}")
+        die(f"could not fetch/download Paper from api.papermc.io: {e}\n"
+            f"(usually a network/timeout issue -- retry /mc setup; if it keeps failing, the Pi may need internet/DNS check)")
     for fn in os.listdir(MC_DIR):
         if fn.startswith("paper-") and fn.endswith(".jar") and fn != fname:
             try:

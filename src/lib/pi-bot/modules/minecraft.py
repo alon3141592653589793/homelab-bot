@@ -7,7 +7,8 @@ SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
 async def _run(message, subcmd, label, timeout=60):
     try:
         r = subprocess.run(["python3", "-u", SCRIPT] + subcmd, capture_output=True, text=True, timeout=timeout)
-        out = (r.stdout or r.stderr or "(no output)").strip()
+        # show stdout AND stderr (stderr holds the real error when a script crashes)
+        out = ((r.stdout or "") + (r.stderr or "")).strip() or "(no output)"
     except subprocess.TimeoutExpired:
         out = f"timed out after {timeout}s"
     except Exception as e:
