@@ -44,6 +44,7 @@ TIMEOUT_TEST = 6
 MAX_ALIVE = 60
 REFRESH_MIN = 360  # 6h
 _lock = threading.Lock()
+_direct_warned = False
 
 
 def _ensure_dir():
@@ -152,15 +153,24 @@ def _mark_dead(proxy):
 
 def session():
     """A requests.Session with a live proxy, or a plain session (direct) if empty."""
+    global _direct_warned
     s = requests.Session()
     p = _pick()
     if p:
         s.proxies.update({"http": p, "https": p})
+    elif not _direct_warned:
+        _direct_warned = True
+        sys.stderr.write(
+            "[proxy] WARNING: no usable proxy -- session will go DIRECT from your home IP.\n"
+            "[proxy] Refresh the pool (/proxy refresh) to avoid IP fingerprinting/bans.\n"
+        )
+        sys.stderr.flush()
     return s
 
 
 def get(url, timeout=20, **kw):
     """GET with proxy rotation; falls back to direct if all proxies fail."""
+    global _direct_warned
     d = _load()
     ps = [p for p in d.get("proxies", []) if p not in d.get("dead", [])]
     for p in ps[:5]:
@@ -170,6 +180,13 @@ def get(url, timeout=20, **kw):
                 return r
         except Exception:
             _mark_dead(p)
+    if not _direct_warned:
+        _direct_warned = True
+        sys.stderr.write(
+            "[proxy] WARNING: no usable proxy -- request going DIRECT from your home IP: "
+            f"{url}\n[proxy] Refresh the pool (/proxy refresh) to avoid IP fingerprinting/bans.\n"
+        )
+        sys.stderr.flush()
     return requests.get(url, timeout=timeout, **kw)
 
 

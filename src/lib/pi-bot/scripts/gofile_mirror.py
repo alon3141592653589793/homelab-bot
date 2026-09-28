@@ -91,6 +91,7 @@ def post_channel(channel_id, text, token=None):
 
 SHM_DIR = "/dev/shm/pi-bot"
 GFILE_ACTIVE = os.path.join(SHM_DIR, ".gofile_active")
+GFILE_KEEP = os.path.expanduser("~/.secrets/gofile_keep.txt")
 
 
 def _write_active(repo, filename):
@@ -113,6 +114,30 @@ def _clear_active():
 def _sigterm(*_):
     _clear_active()
     sys.exit(130)
+
+
+def _auto_keepalive(repo):
+    """On a successful mirror, opt the repo into keep-alive so the 6h cron
+    fake-pulls it and Gofile doesn't delete it for inactivity. Idempotent."""
+    try:
+        os.makedirs(os.path.dirname(GFILE_KEEP), exist_ok=True)
+    except OSError:
+        pass
+    cur = set()
+    try:
+        with open(GFILE_KEEP) as f:
+            cur = {l.strip() for l in f if l.strip()}
+    except OSError:
+        pass
+    if repo in cur:
+        return False
+    cur.add(repo)
+    try:
+        with open(GFILE_KEEP, "w") as f:
+            f.write("\n".join(sorted(cur)) + "\n")
+        return True
+    except OSError:
+        return False
 
 
 def parse_ref(words):
@@ -400,6 +425,8 @@ def main():
             json.dump(manifest, f, indent=2)
     except OSError:
         pass
+    if _auto_keepalive(repo):
+        report(f"Auto-opted {repo} into keep-alive (6h cron fake-pulls it so Gofile won't delete it). /gofile forget {repo} to stop.")
     if channel:
         print("Done — summary posted in channel.")
 
