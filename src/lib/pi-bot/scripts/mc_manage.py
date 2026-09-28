@@ -15,11 +15,13 @@ import time
 import shutil
 import argparse
 import subprocess
+import urllib.request
 
 MC_DIR = os.path.expanduser("~/mc-server")
 SCREEN = "mc"
 LAUNCH = os.path.join(MC_DIR, "start.sh")
 TUNNELS_FILE = os.path.join(MC_DIR, ".tunnels")
+OPS_FILE = os.path.join(MC_DIR, "ops.json")
 BACKUP_DIR = os.path.expanduser("~/mc-backups")
 LOG = os.path.join(MC_DIR, "logs", "latest.log")
 SETUP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mc_setup.py")
@@ -62,6 +64,36 @@ def write_tunnels(java, bedrock):
         json.dump({"java": java, "bedrock": bedrock}, f)
 
 
+def _load_ops():
+    try:
+        with open(OPS_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_ops(ops):
+    os.makedirs(MC_DIR, exist_ok=True)
+    with open(OPS_FILE, "w") as f:
+        json.dump(ops, f, indent=2)
+
+
+def _mojang_uuid(name):
+    """Resolve a Java player name -> dashed UUID via Mojang. None if offline/unavailable."""
+    try:
+        url = f"https://api.mojang.com/users/profiles/minecraft/{name}"
+        req = urllib.request.Request(url, headers={"User-Agent": "pi-bot/mc-manage"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.load(r)
+        if isinstance(data, dict) and data.get("id"):
+            i = data["id"]
+            return f"{i[:8]}-{i[8:12]}-{i[12:16]}-{i[16:20]}-{i[20:]}"
+    except Exception:
+        return None
+    return None
+
+
 def paper_jar():
     try:
         return next(f for f in os.listdir(MC_DIR) if f.startswith("paper-") and f.endswith(".jar"))
@@ -86,6 +118,9 @@ def main():
     sub.add_parser("restart")
     sub.add_parser("status")
     sub.add_parser("ip")
+    p_op = sub.add_parser("op"); p_op.add_argument("name"); p_op.add_argument("level", nargs="?", type=int, default=4)
+    p_deop = sub.add_parser("deop"); p_deop.add_argument("name")
+    sub.add_parser("ops")
     p_log = sub.add_parser("log"); p_log.add_argument("n", nargs="?", type=int, default=30)
     p_con = sub.add_parser("console"); p_con.add_argument("line", nargs="+")
     sub.add_parser("players")
@@ -170,6 +205,63 @@ def main():
             print("  1) Install playit.gg (see /mc setup output)")
             print("  2) Add a Java (TCP 25565) + Bedrock (UDP 19132) tunnel in the playit dashboard")
             print("  3) /mc tunnels set <java-addr:port> <bedrock-addr:port>")
+        wan = "?"
+        try:
+            req = urllib.request.Request("https://api.ipify.org", headers={"User-Agent": "pi-bot/mc"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                wan = r.read().decode().strip()
+        except Exception:
+            pass
+        if wan and wan != "?" and wan != lan:
+            print()
+            print("REMOTE VIA PORT-FORWARD (router, no tunnels):")
+            print(f"  public IP: {wan}  -> forward TCP 25565 (+ UDP 19132 for Bedrock) on the router to {lan}")
+            print(f"  Java players:    {wan}:25565   (after port-forwarding)")
+            print(f"  Bedrock players: {wan} , port 19132")
+            print("  Note: a home public IP can change on reboot -- playit.gg tunnels are more reliable.")
+    elif args.cmd == "op":
+        name = args.name
+        lvl = max(1, min(4, args.level))
+        if screen_alive():
+            send_console(f"op {name}")
+            time.sleep(1)
+            print(f"sent 'op {name}' to the running server (level 4)")
+            print(tail(LOG, 6))
+        else:
+            ops = _load_ops()
+            if any(str(o.get("name", "")).lower() == name.lower() for o in ops):
+                print(f"{name} is already an operator")
+            else:
+                uid = _mojang_uuid(name)
+                ops.append({"uuid": uid or "", "name": name, "level": lvl, "bypassesPlayerLimit": False})
+                _save_ops(ops)
+                if uid:
+                    print(f"added {name} as operator (level {lvl}) -- takes effect on next /mc start")
+                else:
+                    print(f"added {name} as operator (level {lvl}) -- WARNING: UUID not resolved (no internet/Mojang down); server resolves on start if online-mode=true")
+    elif args.cmd == "deop":
+        name = args.name
+        if screen_alive():
+            send_console(f"deop {name}")
+            time.sleep(1)
+            print(f"sent 'deop {name}' to the running server")
+            print(tail(LOG, 6))
+        else:
+            ops = _load_ops()
+            new = [o for o in ops if str(o.get("name", "")).lower() != name.lower()]
+            if len(new) == len(ops):
+                print(f"{name} is not an operator")
+            else:
+                _save_ops(new)
+                print(f"removed {name} from operators -- takes effect on next /mc start")
+    elif args.cmd == "ops":
+        ops = _load_ops()
+        if not ops:
+            print("no operators yet. Add one: /mc op <player>")
+        else:
+            print(f"operators ({len(ops)}):")
+            for o in ops:
+                print(f"  {o.get('name', '?')}  (level {o.get('level', 4)})")
     elif args.cmd == "log":
         print(tail(LOG, args.n))
     elif args.cmd == "console":

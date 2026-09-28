@@ -38,6 +38,9 @@ async def handle_minecraft_command(client, message):
             "/mc log [N]     - Last N lines of the server log (default 30)\n"
             "/mc say <text>  - Broadcast a message in-game\n"
             "/mc cmd <...>   - Run any server console command (op, whitelist, gamemode...)\n"
+            "/mc op <player> [1-4] - Make a player an operator (level 4 = full). Works while server is off too\n"
+            "/mc deop <player> - Remove operator status\n"
+            "/mc ops         - List current operators\n"
             "/mc backup      - Tar the world(s) to ~/mc-backups (keeps last 5)\n"
             "/mc setup       - First-time install OR update (latest Paper + Geyser + Floodgate), then /mc restart\n"
             "/mc update      - Same as /mc setup\n"
@@ -57,6 +60,23 @@ async def handle_minecraft_command(client, message):
         await _run(message, ["status"], "Minecraft Status")
     elif c == "/mc ip":
         await _run(message, ["ip"], "Minecraft IP / How to Join")
+    elif c == "/mc ops":
+        await _run(message, ["ops"], "Minecraft Operators")
+    elif c.startswith("/mc op "):
+        parts = content.split()
+        sub = ["op", parts[2]] if len(parts) >= 3 else ["ops"]
+        if len(parts) >= 4:
+            try:
+                sub += [str(max(1, min(int(parts[3]), 4)))]
+            except ValueError:
+                sub += ["4"]
+        await _run(message, sub, "Minecraft Op", timeout=20)
+    elif c.startswith("/mc deop "):
+        name = raw[len("/mc deop "):].strip()
+        if name:
+            await _run(message, ["deop", name], "Minecraft Deop", timeout=20)
+        else:
+            await message.channel.send("Usage: /mc deop <player>")
     elif c == "/mc players":
         await _run(message, ["players"], "Players Online", timeout=15)
     elif c.startswith("/mc log"):
