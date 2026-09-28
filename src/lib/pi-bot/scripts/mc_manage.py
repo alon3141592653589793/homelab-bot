@@ -111,6 +111,7 @@ def tail(path, n=30):
 
 
 CHUNKY_MARKER = os.path.join(MC_DIR, ".chunky_configured")
+PLUGINS_DIR = os.path.join(MC_DIR, "plugins")
 
 
 def _chunky_loaded(timeout=60):
@@ -132,7 +133,7 @@ def _chunky_loaded(timeout=60):
 
 def auto_chunky():
     """After the server boots, configure Chunky once then resume pre-gen every start."""
-    if not os.path.exists(os.path.join(PLUGINS, "Chunky.jar")):
+    if not os.path.exists(os.path.join(PLUGINS_DIR, "Chunky.jar")):
         return  # not installed -> nothing to do
     if not _chunky_loaded(timeout=60):
         return  # plugin never reported ready; skip silently
