@@ -168,16 +168,16 @@ def ensure_eula_and_props():
             f.write(f"{k}={v}\n")
 
 
-def _latest_github_jar(repo):
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
-    req = urllib.request.Request(url, headers={"User-Agent": "pi-bot/mc-setup",
-                                                "Accept": "application/vnd.github+json"})
+def _latest_modrinth_jar(slug):
+    url = f"https://api.modrinth.com/v2/project/{slug}/version"
+    req = urllib.request.Request(url, headers={"User-Agent": "pi-bot/mc-setup"})
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.load(r)
-    for a in data.get("assets", []):
-        name = a.get("name", "")
-        if name.endswith(".jar"):
-            return a.get("browser_download_url"), name
+    if not isinstance(data, list) or not data:
+        return None, None
+    for f in data[0].get("files", []):
+        if f.get("filename", "").endswith(".jar"):
+            return f.get("url"), f.get("filename")
     return None, None
 
 
@@ -193,12 +193,12 @@ def install_plugins():
             print(f"  WARNING: could not download {name}: {e}")
     # Chunky: pre-generate the world so exploring doesn't cause lag spikes (big Pi win)
     try:
-        url, fname = _latest_github_jar("pop4959/Chunky")
+        url, fname = _latest_modrinth_jar("chunky")
         if url:
             print(f"  installing Chunky (world pre-generation) -> {fname}")
             download(url, os.path.join(PLUGINS, "Chunky.jar"))
         else:
-            print("  WARNING: Chunky latest jar not found in release assets")
+            print("  WARNING: Chunky latest jar not found on Modrinth")
     except Exception as e:
         print(f"  WARNING: could not download Chunky: {e}")
 
