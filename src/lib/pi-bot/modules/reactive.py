@@ -46,7 +46,7 @@ def _gofile_repo_from_ref(rest):
     return first.split(":")[0].strip()
 
 
-async def confirm_power_action(client, message, action_name, script_name, description):
+async def confirm_power_action(client, message, action_name, script_name, description, script_timeout=45):
     """Confirm a reboot/shutdown. If a /gofile download is in flight, offer to
     cancel it or wait for it to finish instead of rebooting mid-download."""
     active = _read_active()
@@ -100,7 +100,7 @@ async def confirm_power_action(client, message, action_name, script_name, descri
         await asyncio.sleep(3)
 
     await message.channel.send(f"{action_name} confirmed. Executing...")
-    await run_script(message, script_name, "")
+    await run_script(message, script_name, "", timeout=script_timeout)
 
 def _led_ctl(mode):
     return subprocess.run(LED_CTL + [mode], capture_output=True, text=True, timeout=10)
@@ -289,10 +289,11 @@ async def handle_reactive_command(client, message):
     elif content in ("/parameters", "/params", "/paramters"):
         await run_script(message, "params.py", "Listing current parameters...", timeout=15)
 
-    elif content in ("/sync", "/sync no-reboot", "/sync config", "/sync dry-run"):
-        if content == "/sync":
-            await run_script(message, "pi_deploy.py", "Pulling latest from the repo, then rebooting...", timeout=300)
-        elif content == "/sync dry-run":
+    elif content == "/sync":
+        await confirm_power_action(client, message, "Sync", "pi_deploy.py", "This pulls the latest code from the repo and reboots the Pi.", script_timeout=300)
+
+    elif content in ("/sync no-reboot", "/sync config", "/sync dry-run"):
+        if content == "/sync dry-run":
             await run_script(message, "pi_deploy.py", "Dry-run: fetching + listing what would change (no write, no reboot)...", args=["--dry-run"], timeout=120)
         else:
             await run_script(message, "pi_deploy.py", "Pulling latest from the repo (no reboot)...", args=["--no-reboot"], timeout=300)
