@@ -161,3 +161,43 @@ sudo visudo -c
 # Add to ~/secure-pi-bot/.env:
 #   ADGUARD_CHANNEL_ID=<discord channel id of the #adguard channel>
 #   VPN_CHANNEL_ID=<discord channel id of the #vpn channel>
+#   MINECRAFT_CHANNEL_ID=<discord channel id of the #minecraft channel>
+
+# ============================================================
+# MINECRAFT CROSS-PLAY (Java + Bedrock) on the Pi, via playit.gg
+# ============================================================
+# Prereqs (Java 21 for MC 1.21 + screen):
+sudo apt install -y openjdk-21-jre-headless screen
+#
+# 1) Create a #minecraft channel in your Discord server, copy its ID, and
+#    add MINECRAFT_CHANNEL_ID=<id> to ~/secure-pi-bot/.env  (see above).
+#
+# 2) Install the server (downloads latest Paper + Geyser + Floodgate, writes
+#    eula, server.properties, ~/mc-server/start.sh, and a USER systemd unit):
+#      /mc setup      (in the #minecraft channel after /sync)
+#    ...or over SSH:
+#      python3 ~/secure-pi-bot/scripts/mc_setup.py
+#      systemctl --user enable --now minecraft.service
+#
+# 3) Install playit.gg (one time -- no router port-forwarding):
+#      curl -SsL https://playit-cloud.github.io/ppa/key.gpg | sudo tee /etc/apt/trusted.gpg.d/playit.gpg
+#      echo 'deb https://playit-cloud.github.io/ppa/assets/' | sudo tee /etc/apt/sources.list.d/playit.list
+#      sudo apt update && sudo apt install playit && playit setup
+#    Open the claim URL it prints to link this Pi to your playit account.
+#
+# 4) In the playit dashboard add TWO tunnels to this Pi:
+#      'Minecraft Java'   (TCP)  -> 127.0.0.1:25565
+#      'Minecraft Bedrock' (UDP) -> 127.0.0.1:19132   (Geyser's default)
+#    Keep Geyser's bedrock port at 19132 and clone-remote-port=false.
+#
+# 5) Point your domain at the Java tunnel (your DNS is elsewhere, so add a
+#    CNAME at your registrar, e.g.):
+#      mc.yourdomain.com  CNAME  <java-tunnel-address>.playit.gg
+#    Give Bedrock players the numeric <bedrock-tunnel-address>:<port>.
+#
+# 6) Save the tunnel addresses so the bot can show them:
+#      /mc tunnels set <java-addr:port> <bedrock-addr:port>
+#
+# RAM note: the server defaults to -Xmx1024M. If the Pi is tight, lower it
+# via  /mc setup  won't change it -- edit ~/mc-server/.heap then /mc restart,
+# or  python3 mc_setup.py --heap 768M. Geyser + Floodgate add ~150-250MB.

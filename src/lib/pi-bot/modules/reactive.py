@@ -393,7 +393,7 @@ async def handle_reactive_command(client, message):
             "/sync dry-run         - Fetch + list what would change (no write, no reboot)\n"
             "/gofile [min] [tor] <model|URL>  - Mirror a HF model OR any direct URL to Gofile (streamed, RAM-only). [min] = progress interval; [tor] = download via Tor. e.g. /gofile 10 ollama run hf.co/OWNER/REPO:Q4_K_M | /gofile tor https://x/f.bin\n"
             "/syncinfo             - When GitHub repo was last updated + when /sync last ran\n"
-            "\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help\n"
+            "\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help | #minecraft -> /mc help\n"
             "/help                 - This message"
         )
         for i in range(0, len(help_text), 1900):

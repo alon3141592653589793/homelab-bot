@@ -9,6 +9,7 @@ from discord.ext import tasks
 from modules.reactive import handle_reactive_command
 from modules.adguard import handle_adguard_command
 from modules.vpn import handle_vpn_command
+from modules.minecraft import handle_minecraft_command
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 import constants
@@ -22,12 +23,14 @@ try:
     ALERT_CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID", "0"))
     ADGUARD_CHANNEL_ID = int(os.getenv("ADGUARD_CHANNEL_ID", "0"))
     VPN_CHANNEL_ID = int(os.getenv("VPN_CHANNEL_ID", "0"))
+    MINECRAFT_CHANNEL_ID = int(os.getenv("MINECRAFT_CHANNEL_ID", "0"))
 except ValueError:
     ALLOWED_USER_ID = 0
     COMMAND_CHANNEL_ID = 0
     ALERT_CHANNEL_ID = 0
     ADGUARD_CHANNEL_ID = 0
     VPN_CHANNEL_ID = 0
+    MINECRAFT_CHANNEL_ID = 0
 
 if not TOKEN or not ALLOWED_USER_ID or not COMMAND_CHANNEL_ID or not ALERT_CHANNEL_ID:
     print("CRITICAL: Environment variables misconfigured.")
@@ -38,6 +41,7 @@ CHANNEL_HANDLERS = {
     COMMAND_CHANNEL_ID: handle_reactive_command,
     ADGUARD_CHANNEL_ID: handle_adguard_command,
     VPN_CHANNEL_ID: handle_vpn_command,
+    MINECRAFT_CHANNEL_ID: handle_minecraft_command,
 }
 
 intents = discord.Intents.default()

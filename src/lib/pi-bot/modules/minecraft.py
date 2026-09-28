@@ -1,0 +1,86 @@
+import os
+import subprocess
+
+SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "mc_manage.py")
+
+
+async def _run(message, subcmd, label, timeout=60):
+    try:
+        r = subprocess.run(["python3", "-u", SCRIPT] + subcmd, capture_output=True, text=True, timeout=timeout)
+        out = (r.stdout or r.stderr or "(no output)").strip()
+    except subprocess.TimeoutExpired:
+        out = f"timed out after {timeout}s"
+    except Exception as e:
+        out = f"error: {e}"
+    if len(out) > 1900:
+        out = out[:1897] + "..."
+    await message.channel.send(f"**{label}**\n{out}" if out else f"**{label}** (no output)")
+
+
+async def handle_minecraft_command(client, message):
+    if os.path.exists("/dev/shm/pi-bot/.testall_running"):
+        await message.channel.send("⏳ /testall is running -- commands paused until it finishes.")
+        return
+    content = message.content.strip()
+    raw = message.content.strip()
+    c = content.lower()
+
+    if c in ("/mc", "/mc help"):
+        await message.channel.send(
+            "**Minecraft (cross-play: Java + Bedrock via Paper + Geyser)**\n"
+            "/mc start       - Start the server\n"
+            "/mc stop        - Graceful stop (sends 'stop' to the console)\n"
+            "/mc restart     - Restart the server\n"
+            "/mc status      - Service state, screen session, paper jar, tunnels\n"
+            "/mc players     - Who's online right now\n"
+            "/mc log [N]     - Last N lines of the server log (default 30)\n"
+            "/mc say <text>  - Broadcast a message in-game\n"
+            "/mc cmd <...>   - Run any server console command (op, whitelist, gamemode...)\n"
+            "/mc backup      - Tar the world(s) to ~/mc-backups (keeps last 5)\n"
+            "/mc setup       - First-time install OR update (latest Paper + Geyser + Floodgate), then /mc restart\n"
+            "/mc update      - Same as /mc setup\n"
+            "/mc tunnels     - Show the playit.gg tunnel addresses\n"
+            "/mc tunnels set <java-addr:port> <bedrock-addr:port>  - Save them so /mc status shows them\n"
+            "/mc help        - This message\n\n"
+            "Java players use the java tunnel (25565). Bedrock players use the bedrock tunnel (19132). "
+            "Tunnels come from playit.gg -- no router port-forwarding."
+        )
+    elif c == "/mc start":
+        await _run(message, ["start"], "Minecraft Start")
+    elif c == "/mc stop":
+        await _run(message, ["stop"], "Minecraft Stop", timeout=90)
+    elif c == "/mc restart":
+        await _run(message, ["restart"], "Minecraft Restart", timeout=60)
+    elif c == "/mc status":
+        await _run(message, ["status"], "Minecraft Status")
+    elif c == "/mc players":
+        await _run(message, ["players"], "Players Online", timeout=15)
+    elif c.startswith("/mc log"):
+        parts = content.split()
+        sub = ["log"]
+        if len(parts) > 2:
+            try:
+                sub += [str(max(1, min(int(parts[2]), 100)))]
+            except ValueError:
+                sub += ["30"]
+        await _run(message, sub, "Minecraft Log", timeout=15)
+    elif c.startswith("/mc say "):
+        text = raw[len("/mc say "):].strip()
+        await _run(message, ["console", "say", text], f"Say: {text[:60]}", timeout=15)
+    elif c.startswith("/mc cmd "):
+        line = raw[len("/mc cmd "):].strip()
+        await _run(message, ["console", line], f"Cmd: {line[:60]}", timeout=15)
+    elif c == "/mc backup":
+        await _run(message, ["backup"], "Minecraft Backup", timeout=300)
+    elif c in ("/mc update", "/mc setup"):
+        await _run(message, ["update"], "Minecraft Setup/Update", timeout=600)
+    elif c == "/mc tunnels":
+        await _run(message, ["tunnels"], "Minecraft Tunnels")
+    elif c.startswith("/mc tunnels set "):
+        rest = raw[len("/mc tunnels set "):].strip().split()
+        if len(rest) >= 2:
+            await _run(message, ["tunnels", "set", rest[0], rest[1]], "Minecraft Tunnels (saved)")
+        else:
+            await message.channel.send("Usage: /mc tunnels set <java-addr:port> <bedrock-addr:port>")
+    else:
+        await message.channel.send("Unknown Minecraft command. Try /mc help.")
