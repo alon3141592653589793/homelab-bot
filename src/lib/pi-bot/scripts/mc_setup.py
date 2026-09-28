@@ -25,7 +25,7 @@ import urllib.request
 
 MC_DIR = os.path.expanduser("~/mc-server")
 PLUGINS = os.path.join(MC_DIR, "plugins")
-PAPER_API = "https://api.papermc.io/v2/projects/paper"
+PAPER_API = "https://fill.papermc.io/v3/projects/paper"
 GEYSER_JAR = "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot"
 FLOODGATE_JAR = "https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot"
 HEAP_FILE = os.path.join(MC_DIR, ".heap")
@@ -56,26 +56,49 @@ def download(url, dest):
         shutil.copyfileobj(r, f, length=1024 * 1024)
 
 
+def _semver_key(s):
+    key = []
+    for x in str(s).split("."):
+        try:
+            key.append(int(x))
+        except ValueError:
+            key.append(0)
+    return key
+
+
 def pick_version(requested):
     if requested:
         return requested
-    versions = fetch_json(PAPER_API).get("versions", [])
-    cands = [v for v in versions if v.startswith("1.") and v.replace(".", "").isdigit()]
-    cands.sort(key=lambda s: [int(x) for x in s.split(".")])
-    return cands[-1] if cands else None
+    data = fetch_json(PAPER_API)
+    raw = data.get("versions", []) if isinstance(data, dict) else data
+    cands = []
+    if isinstance(raw, dict):
+        for grp in raw.values():
+            cands.extend(grp if isinstance(grp, list) else [grp])
+    elif isinstance(raw, list):
+        cands = list(raw)
+    cands = [v for v in cands if isinstance(v, str) and v[:1].isdigit()]
+    if not cands:
+        return None
+    cands.sort(key=_semver_key)
+    return cands[-1]
 
 
 def latest_paper_build(mc_version):
     data = fetch_json(f"{PAPER_API}/versions/{mc_version}/builds")
-    builds = data.get("builds", [])
-    stable = [b for b in builds if b.get("channel") == "default"]
-    pick = stable[-1] if stable else (builds[-1] if builds else None)
-    if not pick:
+    if isinstance(data, dict) and data.get("ok") is False:
         return None, None, None
-    bnum = pick["build"]
-    fname = pick["downloads"]["application"]["name"]
-    dl = f"{PAPER_API}/versions/{mc_version}/builds/{bnum}/downloads/{fname}"
-    return bnum, fname, dl
+    builds = data if isinstance(data, list) else (data.get("builds", []) if isinstance(data, dict) else [])
+    stable = [b for b in builds if b.get("channel") == "STABLE"]
+    if not stable:
+        stable = list(builds)
+    if not stable:
+        return None, None, None
+    pick = max(stable, key=lambda b: int(b.get("id", 0) or 0))
+    dl_obj = (pick.get("downloads") or {}).get("server:default") or {}
+    url = dl_obj.get("url")
+    fname = dl_obj.get("name") or (url.split("/")[-1] if url else "paper.jar")
+    return pick.get("id"), fname, url
 
 
 def find_paper_jar():
