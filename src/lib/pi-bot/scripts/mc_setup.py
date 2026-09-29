@@ -22,6 +22,7 @@ import shutil
 import argparse
 import subprocess
 import urllib.request
+import urllib.parse
 
 MC_DIR = os.path.expanduser("~/mc-server")
 PLUGINS = os.path.join(MC_DIR, "plugins")
@@ -183,7 +184,7 @@ def ensure_eula_and_props():
 
 
 def _latest_modrinth_jar(slug, loaders=("paper", "spigot")):
-    url = f"https://api.modrinth.com/v2/project/{slug}/version"
+    url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(slug, safe='')}/version"
     req = urllib.request.Request(url, headers={"User-Agent": "pi-bot/mc-setup"})
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.load(r)
@@ -220,15 +221,17 @@ def install_plugins():
     except Exception as e:
         print(f"  WARNING: could not download Chunky: {e}")
     # ClearLag: periodically clears dropped items + excess entities, caps mobs (RAM win on Pi)
+    # NOTE: the original "clearlag" slug was removed from Modrinth; "clearlag++" is the
+    # maintained successor (supports MC 26.x, ~185k downloads).
     try:
-        url, fname = _latest_modrinth_jar("clearlag")
+        url, fname = _latest_modrinth_jar("clearlag++")
         if url:
-            print(f"  installing ClearLag (entity/item cleanup) -> {fname}")
+            print(f"  installing ClearLag++ (entity/item cleanup) -> {fname}")
             download(url, os.path.join(PLUGINS, "ClearLag.jar"))
         else:
-            print("  WARNING: ClearLag latest jar not found on Modrinth")
+            print("  WARNING: ClearLag++ latest jar not found on Modrinth")
     except Exception as e:
-        print(f"  WARNING: could not download ClearLag: {e}")
+        print(f"  WARNING: could not download ClearLag++: {e}")
 
 
 def main():
