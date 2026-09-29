@@ -219,6 +219,16 @@ def install_plugins():
             print("  WARNING: Chunky latest jar not found on Modrinth")
     except Exception as e:
         print(f"  WARNING: could not download Chunky: {e}")
+    # ClearLag: periodically clears dropped items + excess entities, caps mobs (RAM win on Pi)
+    try:
+        url, fname = _latest_modrinth_jar("clearlag")
+        if url:
+            print(f"  installing ClearLag (entity/item cleanup) -> {fname}")
+            download(url, os.path.join(PLUGINS, "ClearLag.jar"))
+        else:
+            print("  WARNING: ClearLag latest jar not found on Modrinth")
+    except Exception as e:
+        print(f"  WARNING: could not download ClearLag: {e}")
 
 
 def main():
