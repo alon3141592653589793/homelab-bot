@@ -128,7 +128,16 @@ def write_launch(heap):
     with open(LAUNCH, "w") as f:
         f.write("#!/bin/bash\n")
         f.write(f"cd {MC_DIR}\n")
-        f.write(f"exec java -Xms{heap} -Xmx{heap} -XX:+UseG1GC -jar {paper_jar} nogui\n")
+        # G1GC tuned for the Pi's limited RAM: short pauses, parallel ref proc,
+        # larger young gen so chunk/mob churn is collected before it hits old gen.
+        flags = (
+            f"-Xms{heap} -Xmx{heap} "
+            "-XX:+UseG1GC -XX:MaxGCPauseMillis=50 -XX:+ParallelRefProcEnabled "
+            "-XX:+UnlockExperimentalVMOptions -XX:G1NewSizePercent=30 "
+            "-XX:G1ReservePercent=20 -XX:G1HeapRegionSize=8M "
+            "-XX:+AlwaysPreTouch -XX:+DisableExplicitGC"
+        )
+        f.write(f"exec java {flags} -jar {paper_jar} nogui\n")
     os.chmod(LAUNCH, 0o755)
 
     print("  wrote start.sh (run via: screen -dmS mc start.sh  -- managed directly, no systemd)")
@@ -151,6 +160,11 @@ def ensure_eula_and_props():
         "view-distance": "4",
         "simulation-distance": "4",
         "network-compression-threshold": "256",
+        # Pi / SD-card optimizations (safe defaults; user edits win)
+        "sync-chunk-writes": "false",   # cuts SD-card writes from chunk saves
+        "use-native-transport": "true",  # epoll on Linux = lower net overhead
+        "spawn-protection": "0",        # ops can build at spawn
+        "enable-rcon": "false",
     }
     existing = {}
     if os.path.exists(sp):
@@ -277,7 +291,9 @@ def main():
     print("== config ==")
     ensure_eula_and_props()
     write_launch(args.heap)
-    print("  optimizations: view-distance=4, simulation-distance=4, network-compression=256 (Pi-friendly)")
+    print("  optimizations: view-distance=4, simulation-distance=4, network-compression=256,")
+    print("                 sync-chunk-writes=false (SD-card), native transport (epoll),")
+    print("                 G1GC tuned for Pi RAM (short pauses, larger young gen)")
     print("  Chunky pre-generation is AUTO: /mc start configures it once (world=world, radius=2000)")
     print("  and resumes on every later restart -- no manual /mc cmd needed.")
 
