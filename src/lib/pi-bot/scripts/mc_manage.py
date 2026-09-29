@@ -10,6 +10,7 @@ Sub-commands:
   update [--version V] [--heap H]    # re-run setup (latest Paper + Geyser + Floodgate)
 """
 import os
+import re
 import sys
 import json
 import time
@@ -167,6 +168,7 @@ def main():
     p_log = sub.add_parser("log"); p_log.add_argument("n", nargs="?", type=int, default=30)
     p_con = sub.add_parser("console"); p_con.add_argument("line", nargs="+")
     sub.add_parser("players")
+    sub.add_parser("who")
     sub.add_parser("backup")
     p_tun = sub.add_parser("tunnels")
     p_tun.add_argument("set", nargs="?")
@@ -327,6 +329,40 @@ def main():
             print(tail(LOG, 8))
         else:
             print("server not running -- /mc start first")
+    elif args.cmd == "who":
+        if not screen_alive():
+            print("server not running -- /mc start first")
+        else:
+            send_console("list")
+            time.sleep(2)
+            try:
+                with open(LOG, errors="replace") as f:
+                    lines = f.readlines()
+            except OSError:
+                lines = []
+            online = []
+            for line in reversed(lines):
+                if "players online:" in line:
+                    tail_p = line.split("players online:", 1)[1].strip()
+                    online = [n.strip() for n in tail_p.split(",") if n.strip()]
+                    break
+            if not online:
+                print("no players online (or /list not parsed yet)")
+            else:
+                # build IP map from login lines:  Name[/1.2.3.4:port] logged in
+                ipmap = {}
+                pat = re.compile(r"INFO\]: (.+?)\[/([0-9a-fA-F:.]+):\d+\] logged in")
+                for line in lines:
+                    m = pat.search(line)
+                    if m:
+                        ipmap[m.group(1).strip()] = m.group(2)  # last wins = most recent login
+                print(f"Players online ({len(online)}):")
+                for name in online:
+                    ip = ipmap.get(name, "?")
+                    print(f"  {name}  ip={ip}")
+                if any(ip == "?" for ip in [ipmap.get(n) for n in online]):
+                    print("\n(IPs are whatever the server sees; via playit.gg tunnels that's the")
+                    print(" tunnel/relay IP, not the player's real home IP unless proxy-protocol is on.)")
     elif args.cmd == "backup":
         os.makedirs(BACKUP_DIR, exist_ok=True)
         if screen_alive():
