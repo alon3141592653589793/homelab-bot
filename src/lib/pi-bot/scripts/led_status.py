@@ -4,6 +4,12 @@ import glob
 import subprocess
 from datetime import datetime
 
+try:
+    from zoneinfo import ZoneInfo
+    _TZ = ZoneInfo("Asia/Jerusalem")  # match the scheduler's wall clock
+except Exception:
+    _TZ = None
+
 SHM = "/dev/shm/pi-bot"
 OVERRIDE = f"{SHM}/led_override"
 GRACE = f"{SHM}/led_grace_until"
@@ -33,7 +39,7 @@ try:
 except ValueError:
     grace = 0.0
 
-h = datetime.now().hour
+h = (datetime.now(_TZ) if _TZ else datetime.now()).hour
 sleep = h >= 22 or h < 10
 
 try:

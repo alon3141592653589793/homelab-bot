@@ -11,6 +11,12 @@ import time
 import subprocess
 from datetime import datetime
 
+try:
+    from zoneinfo import ZoneInfo
+    _TZ = ZoneInfo("Asia/Jerusalem")  # your wall clock, regardless of Pi system TZ
+except Exception:
+    _TZ = None
+
 SHM = "/dev/shm/pi-bot"
 OVERRIDE = f"{SHM}/led_override"
 GRACE = f"{SHM}/led_grace_until"
@@ -41,7 +47,7 @@ def ssh_active():
 
 
 def in_sleep_window():
-    h = datetime.now().hour
+    h = (datetime.now(_TZ) if _TZ else datetime.now()).hour
     return h >= SLEEP_START or h < SLEEP_END
 
 
@@ -85,13 +91,15 @@ def main():
     state = "on" if on else "off"
     if read(LAST, "") == state:
         return  # no change since last run -> skip the sudo/write
-    try:
-        with open(LAST, "w") as f:
-            f.write(state)
-        os.chmod(LAST, 0o666)
-    except OSError:
-        pass
-    subprocess.run(LED_CTL + ["apply", state], capture_output=True, text=True, timeout=10)
+    r = subprocess.run(LED_CTL + ["apply", state], capture_output=True, text=True, timeout=10)
+    if r.returncode == 0:
+        try:
+            with open(LAST, "w") as f:
+                f.write(state)
+            os.chmod(LAST, 0o666)
+        except OSError:
+            pass
+    # apply failed -> leave LAST unchanged so next minute retries
 
 
 if __name__ == "__main__":
