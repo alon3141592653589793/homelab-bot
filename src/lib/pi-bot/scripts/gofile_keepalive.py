@@ -16,6 +16,15 @@ Three jobs in one pass:
      failures to Discord. Each is state-tracked (state file in /dev/shm) so it
      warns ONCE per transition, not every 6h.
 
+Gofile download resolution (FREE, no premium, no payment):
+  Gofile now requires a website token (`wt`, parsed from gofile.io/dist/js/alljs.js)
+  on the content API, plus a bearer token (your stored account token, or a free
+  anonymous guest token from POST /accounts). The download link itself needs an
+  `accountToken` cookie. All API calls go through proxy_pool (rotating exit IPs)
+  so the home IP isn't fingerprinted; the large file download is direct (free
+  proxies can't carry multi-GB streams reliably). Guest token + wt are cached in
+  /dev/shm and refreshed only on failure.
+
 Opt-in list: ~/.secrets/gofile_keep.txt -- one HF repo or direct source URL per
 line. Successful mirrors auto-add themselves (gofile_mirror.py). Manage with
   /gofile keep <ref|URL> | /gofile forget <ref|URL> | /gofile keeplist.
@@ -51,6 +60,8 @@ TOKEN_FILE = os.path.expanduser("~/.secrets/gofile_token")
 KEEP_FILE = os.path.expanduser("~/.secrets/gofile_keep.txt")
 STATE_FILE = "/dev/shm/pi-bot/gofile_keepalive_state.json"
 SHM = "/dev/shm/pi-bot"
+GUEST_TOKEN_FILE = f"{SHM}/gofile_guest_token"
+WT_FILE = f"{SHM}/gofile_wt"
 CHUNK = 1024 * 1024
 UA = {"User-Agent": "Mozilla/5.0"}
 os.makedirs(SHM, exist_ok=True)
@@ -96,50 +107,141 @@ def is_kept(m, keep):
     return (m.get("repo") in keep) or (m.get("source_url") in keep)
 
 
-def ping_alive(code, tk):
-    """True=alive, False=dead (removed), None=transient API error (unknown)."""
-    headers = {"Authorization": f"Bearer {tk}"} if tk else {}
+# --- Gofile free download-resolution flow (no premium, no payment) ---
+
+def _get_guest_token(force=False):
+    """Free anonymous guest account token (POST /accounts). Cached in /dev/shm."""
+    if not force:
+        try:
+            with open(GUEST_TOKEN_FILE) as f:
+                t = f.read().strip()
+            if t:
+                return t
+        except OSError:
+            pass
     try:
-        r = proxy_pool.get(f"https://api.gofile.io/contents/{code}", headers=headers, timeout=30)
+        r = requests.post("https://api.gofile.io/accounts", headers=UA, timeout=30)
         b = r.json()
+        t = (b.get("data") or {}).get("token") if isinstance(b, dict) else None
+        if t:
+            with open(GUEST_TOKEN_FILE, "w") as f:
+                f.write(t)
+            return t
     except Exception:
-        return None
-    status = b.get("status")
-    if status == "ok":
-        return True
-    if isinstance(status, str) and "notfound" in status.lower().replace("-", "").replace("_", ""):
-        return False
-    # any other status (rate-limit, auth-needed, waiter, ...) -> unknown, don't
-    # flip the alive/dead state and don't false-warn.
+        pass
     return None
 
 
-def resolve_direct(code, tk):
-    headers = {"Authorization": f"Bearer {tk}"} if tk else {}
+def _refresh_website_token():
+    """wt is embedded in gofile.io/dist/js/alljs.js as: var fetchData = { wt: "..." }"""
     try:
-        r = proxy_pool.get(f"https://api.gofile.io/contents/{code}", headers=headers, timeout=30)
-        b = r.json()
-        if b.get("status") == "ok":
-            d = b["data"]
-            for k in ("directLink", "downloadPage", "url"):
-                v = d.get(k) if isinstance(d, dict) else None
-                if isinstance(v, str) and v.startswith("http") and "gofile.io/d/" not in v:
-                    return v
+        r = proxy_pool.get("https://gofile.io/dist/js/alljs.js", headers=UA, timeout=30)
+        m = re.search(r'fetchData\s*=\s*\{\s*wt:\s*"([^"]+)"', r.text)
+        if m:
+            wt = m.group(1)
+            with open(WT_FILE, "w") as f:
+                f.write(wt)
+            return wt
     except Exception:
         pass
-    p = proxy_pool.get(f"https://gofile.io/d/{code}", headers=UA, timeout=30)
-    p.raise_for_status()
-    m = (re.search(r'(https?://store-\d+\.gofile\.io/[^"\'<>\s]+)', p.text)
-         or re.search(r'(https?://[a-z0-9.-]+\.gofile\.io/download/[^"\'<>\s]+)', p.text))
-    if m:
-        return m.group(1)
-    raise RuntimeError("cannot resolve Gofile direct link (free scrape failed; premium needed?)")
+    return None
 
 
-def stream_and_hash(url):
+def _get_website_token():
+    try:
+        with open(WT_FILE) as f:
+            wt = f.read().strip()
+        if wt:
+            return wt
+    except OSError:
+        pass
+    return _refresh_website_token()
+
+
+def _content_call(code, token, wt):
+    try:
+        r = proxy_pool.get(
+            f"https://api.gofile.io/contents/{code}?wt={wt}&cache=true",
+            headers={"Authorization": f"Bearer {token}", **UA},
+            timeout=30,
+        )
+        return r.json()
+    except Exception:
+        return None
+
+
+def _content_info(code, tk):
+    """Return (body, token) from the Gofile content API using the free
+    guest-token + website-token flow. `body` is the parsed JSON (ok or last
+    error) or None on network failure. `token` is the bearer used (for the
+    download cookie). No premium needed."""
+    token = tk or _get_guest_token()
+    wt = _get_website_token()
+    last = None
+    # attempt 1: cached token + cached wt
+    if token and wt:
+        last = _content_call(code, token, wt)
+        if last and last.get("status") == "ok":
+            return last, token
+    # attempt 2: refresh wt (it rotates)
+    wt = _refresh_website_token()
+    if token and wt:
+        last = _content_call(code, token, wt)
+        if last and last.get("status") == "ok":
+            return last, token
+    # attempt 3: guest token may have expired -> mint a fresh one
+    if not tk:
+        token = _get_guest_token(force=True)
+        if token and wt:
+            last = _content_call(code, token, wt)
+            if last and last.get("status") == "ok":
+                return last, token
+    return last, token
+
+
+def ping_alive(code, tk):
+    """True=alive, False=dead (removed), None=transient API error (unknown)."""
+    b, _ = _content_info(code, tk)
+    if b is None:
+        return None
+    if b.get("status") == "ok":
+        return True
+    data = b.get("data") or {}
+    if isinstance(data, dict) and data.get("notFound"):
+        return False
+    st = str(b.get("status", "")).lower().replace("-", "").replace("_", "")
+    if "notfound" in st:
+        return False
+    # rate-limit / auth / waiter / ... -> unknown, don't flip alive/dead or warn
+    return None
+
+
+def resolve_direct(code, tk, filename=None):
+    """Resolve a free download URL for the file. Returns (url, token). Raises
+    if the file is dead or Gofile changed its flow."""
+    b, token = _content_info(code, tk)
+    if not b or b.get("status") != "ok":
+        raise RuntimeError("Gofile content API failed (free guest+wt flow); file may be dead or Gofile changed its API")
+    data = b.get("data") or {}
+    children = data.get("children") or []
+    if isinstance(children, dict):
+        children = list(children.values())
+    if not children:
+        raise RuntimeError("Gofile content has no files")
+    pick = next((c for c in children if filename and c.get("name") == filename), None) or children[0]
+    link = pick.get("link")
+    if not link:
+        raise RuntimeError("Gofile file has no download link")
+    return link, token
+
+
+def stream_and_hash(url, token=None):
     sha = hashlib.sha256()
     got = 0
-    with requests.get(url, stream=True, timeout=120, headers=UA) as r:
+    headers = dict(UA)
+    if token:
+        headers["Cookie"] = f"accountToken={token}"
+    with requests.get(url, stream=True, timeout=120, headers=headers) as r:
         r.raise_for_status()
         for chunk in r.iter_content(chunk_size=CHUNK):
             if chunk:
@@ -200,7 +302,7 @@ def main():
             s["alive"] = False
         else:
             # transient API error: keep the previous alive/dead state, don't warn
-            if prev_alive is None and "alive" not in s:
+            if "alive" not in s:
                 s["alive"] = None
 
     # --- 2. KEEP-ALIVE stream + integrity for opted-in entries only ---
@@ -214,17 +316,8 @@ def main():
         if state.get(code, {}).get("alive") is False:
             continue
         try:
-            url = None
-            for attempt in range(2):
-                try:
-                    url = resolve_direct(code, tk)
-                    break
-                except Exception:
-                    if attempt == 0:
-                        time.sleep(3)
-                        continue
-                    raise
-            sha, got = stream_and_hash(url)
+            url, dl_token = resolve_direct(code, tk, m.get("file"))
+            sha, got = stream_and_hash(url, dl_token)
             ok = (sha == m.get("sha256"))
             m["last_verified"] = now
             m["downloads"] = int(m.get("downloads", 0)) + 1

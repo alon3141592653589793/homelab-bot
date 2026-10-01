@@ -15,7 +15,7 @@ except ImportError:
     print("FAILURE: requests missing. pip3 install --user requests")
     sys.exit(1)
 
-import proxy_pool
+import gofile_keepalive  # shares the free guest-token + website-token flow
 
 MANIFEST_FILE = "/home/alon/secure-pi-bot/gofile_mirror/manifest.json"
 TOKEN_FILE = os.path.expanduser("~/.secrets/gofile_token")
@@ -30,15 +30,9 @@ def load_token():
 
 
 def check_code(code, tk):
-    """True = alive, False = dead/removed, None = API error (unknown)."""
-    headers = {"Authorization": f"Bearer {tk}"} if tk else {}
-    try:
-        r = proxy_pool.get(f"https://api.gofile.io/contents/{code}",
-                           headers=headers, timeout=30)
-        b = r.json()
-        return b.get("status") == "ok"
-    except Exception:
-        return None
+    """True = alive, False = dead/removed, None = API error (unknown).
+    Delegates to gofile_keepalive.ping_alive (free wt + guest-token flow, no premium)."""
+    return gofile_keepalive.ping_alive(code, tk)
 
 
 def _fmt_size(n):
