@@ -27,15 +27,24 @@ def apply_brightness(on):
 
 mode = (sys.argv[1] if len(sys.argv) > 1 else "auto").lower()
 os.makedirs(SHM, exist_ok=True)
-if mode in ("on", "off", "auto"):
+
+# "apply on|off" -> used by the cron scheduler (led_schedule.py) to set
+# brightness WITHOUT touching the override flag, so manual /leds on|off
+# choices still win until reboot. Not meant for direct manual use.
+if mode == "apply":
+    target = (sys.argv[2] if len(sys.argv) > 2 else "").lower()
+    if target in ("on", "off"):
+        apply_brightness(target == "on")
+    print(f"led apply -> {target}")
+elif mode in ("on", "off", "auto"):
     try:
         with open(OVERRIDE, "w") as f:
             f.write(mode)
     except OSError:
         pass
-if mode == "on":
-    apply_brightness(True)
-elif mode == "off":
-    apply_brightness(False)
-# auto: just set the flag; the pi-leds daemon reconciles the schedule.
-print(f"led override -> {mode}")
+    if mode == "on":
+        apply_brightness(True)
+    elif mode == "off":
+        apply_brightness(False)
+    # auto: just set the flag; the cron scheduler reconciles the schedule.
+    print(f"led override -> {mode}")

@@ -22,6 +22,11 @@
 # Fan event logger every minute (instant exit if /dev/shm/pi-bot missing)
 * * * * * python3 /home/alon/secure-pi-bot/scripts/fan_logger.py
 
+# LED auto schedule reconciler (every minute). Replaces the old root led_manager
+# daemon (which had no install mechanism and died on reboot). Evaluates day/night
+# (off 22:00-10:00) + SSH + /leds override and applies via sudo led_ctl apply.
+* * * * * python3 /home/alon/secure-pi-bot/scripts/led_schedule.py
+
 # Sync RAM logs to Google Sheets every 30 min (replaces SD-card flush)
 */30 * * * * python3 /home/alon/secure-pi-bot/scripts/log_sync.py
 
