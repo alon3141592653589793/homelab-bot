@@ -116,9 +116,11 @@ def _sigterm(*_):
     sys.exit(130)
 
 
-def _auto_keepalive(repo):
-    """On a successful mirror, opt the repo into keep-alive so the 6h cron
-    fake-pulls it and Gofile doesn't delete it for inactivity. Idempotent."""
+def _auto_keepalive(key):
+    """On a successful mirror, opt `key` into keep-alive so the 6h cron
+    fake-pulls it and Gofile doesn't delete it for inactivity. `key` is the HF
+    repo for model mirrors, or the full source URL for direct-link mirrors.
+    Idempotent."""
     try:
         os.makedirs(os.path.dirname(GFILE_KEEP), exist_ok=True)
     except OSError:
@@ -129,9 +131,9 @@ def _auto_keepalive(repo):
             cur = {l.strip() for l in f if l.strip()}
     except OSError:
         pass
-    if repo in cur:
+    if key in cur:
         return False
-    cur.add(repo)
+    cur.add(key)
     try:
         with open(GFILE_KEEP, "w") as f:
             f.write("\n".join(sorted(cur)) + "\n")
@@ -454,8 +456,9 @@ def main():
             json.dump(manifest, f, indent=2)
     except OSError:
         pass
-    if repo != "(direct)" and _auto_keepalive(repo):
-        report(f"Auto-opted {repo} into keep-alive (6h cron fake-pulls it so Gofile won't delete it). /gofile forget {repo} to stop.")
+    keep_key = repo if repo != "(direct)" else source_url
+    if _auto_keepalive(keep_key):
+        report(f"Auto-opted {keep_key} into keep-alive (6h cron fake-pulls it so Gofile won't delete it). /gofile forget {keep_key} to stop.")
     if channel:
         print("Done — summary posted in channel.")
 

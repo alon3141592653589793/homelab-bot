@@ -35,13 +35,19 @@ def _kill_active(active):
 
 
 def _gofile_repo_from_ref(rest):
-    """Normalize 'ollama run hf.co/OWNER/REPO:TAG' -> 'OWNER/REPO'."""
+    """Normalize a gofile ref to its keep-alive key.
+    HF model: 'ollama run hf.co/OWNER/REPO:TAG' -> 'OWNER/REPO'.
+    Direct URL: 'https://...' -> the full URL (matches the source_url key the
+    mirror auto-opts in for direct-link mirrors)."""
     toks = [t for t in rest.strip().split() if t]
     while toks and toks[0].lower() in ("ollama", "run", "pull"):
         toks.pop(0)
     if not toks:
         return ""
-    ref = " ".join(toks).replace("https://huggingface.co/", "").replace("hf.co/", "")
+    ref = " ".join(toks).strip()
+    if ref.lower().startswith(("http://", "https://")):
+        return ref
+    ref = ref.replace("https://huggingface.co/", "").replace("hf.co/", "")
     first = ref.split()[0] if ref.split() else ref
     return first.split(":")[0].strip()
 
