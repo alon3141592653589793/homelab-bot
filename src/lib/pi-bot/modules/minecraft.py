@@ -42,7 +42,8 @@ async def handle_minecraft_command(client, message):
             "/mc op <player> [1-4] - Make a player an operator (level 4 = full). Works while server is off too\n"
             "/mc deop <player> - Remove operator status\n"
             "/mc ops         - List current operators\n"
-            "/mc backup      - Tar the world(s) to ~/mc-backups (keeps last 5)\n"
+            "/mc backup      - Tar the world(s) to ~/mc-backups (manual: kept indefinitely)\n"
+            "/mc autobackup  - Run the auto-backup now (only if world changed; keeps last 5)\n"
             "/mc 24/7 [on|off]- Auto-restart the server if it dies (skips maintenance + /testall)\n"
             "/mc setup       - First-time install OR update (latest Paper + Geyser + Floodgate), then /mc restart\n"
             "/mc update      - Same as /mc setup\n"
@@ -100,6 +101,8 @@ async def handle_minecraft_command(client, message):
         await _run(message, ["console", line], f"Cmd: {line[:60]}", timeout=15)
     elif c == "/mc backup":
         await _run(message, ["backup"], "Minecraft Backup", timeout=300)
+    elif c == "/mc autobackup":
+        await _run(message, ["backup", "--auto"], "Minecraft Auto-Backup", timeout=600)
     elif c in ("/mc update", "/mc setup"):
         await _run(message, ["update"], "Minecraft Setup/Update", timeout=600)
     elif c == "/mc tunnels":

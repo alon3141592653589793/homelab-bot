@@ -25,6 +25,7 @@ LAUNCH = os.path.join(MC_DIR, "start.sh")
 TUNNELS_FILE = os.path.join(MC_DIR, ".tunnels")
 OPS_FILE = os.path.join(MC_DIR, "ops.json")
 BACKUP_DIR = os.path.expanduser("~/mc-backups")
+SIG_FILE = os.path.join(BACKUP_DIR, ".last_region_sig")
 LOG = os.path.join(MC_DIR, "logs", "latest.log")
 SETUP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mc_setup.py")
 MARKER_247 = os.path.join(MC_DIR, ".auto_restart")
@@ -154,6 +155,51 @@ def auto_chunky():
         f.write("configured\n")
 
 
+def _world_dirs():
+    return [d for d in os.listdir(MC_DIR)
+            if os.path.isdir(os.path.join(MC_DIR, d)) and d.startswith("world")]
+
+
+def _world_signature():
+    """Max mtime across region + entity chunk files (*.mca). These change ONLY
+    when blocks/entities are actually modified, so an idle player or a plain
+    save-all (which rewrites level.dat + playerdata every save) does NOT count
+    as a change. This is the 'did the world actually change' signal."""
+    max_mt = 0.0
+    for w in _world_dirs():
+        root = os.path.join(MC_DIR, w)
+        for dirpath, _dirs, files in os.walk(root):
+            if os.path.basename(dirpath) not in ("region", "entities"):
+                continue
+            for fn in files:
+                if not fn.endswith(".mca"):
+                    continue
+                try:
+                    mt = os.stat(os.path.join(dirpath, fn)).st_mtime
+                    if mt > max_mt:
+                        max_mt = mt
+                except OSError:
+                    pass
+    return max_mt
+
+
+def _last_sig():
+    try:
+        with open(SIG_FILE) as f:
+            return float(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0.0
+
+
+def _write_sig(v):
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        with open(SIG_FILE, "w") as f:
+            f.write(str(v))
+    except OSError:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd")
@@ -169,7 +215,8 @@ def main():
     p_con = sub.add_parser("console"); p_con.add_argument("line", nargs="+")
     sub.add_parser("players")
     sub.add_parser("who")
-    sub.add_parser("backup")
+    p_bak = sub.add_parser("backup")
+    p_bak.add_argument("--auto", action="store_true")
     p_tun = sub.add_parser("tunnels")
     p_tun.add_argument("set", nargs="?")
     p_tun.add_argument("java", nargs="?")
@@ -365,24 +412,42 @@ def main():
                     print(" tunnel/relay IP, not the player's real home IP unless proxy-protocol is on.)")
     elif args.cmd == "backup":
         os.makedirs(BACKUP_DIR, exist_ok=True)
-        if screen_alive():
-            send_console("save-all")
-            time.sleep(3)
-        worlds = [d for d in os.listdir(MC_DIR)
-                  if os.path.isdir(os.path.join(MC_DIR, d)) and d.startswith("world")]
+        worlds = _world_dirs()
         if not worlds:
             print("no world dirs found")
             return
-        ts = time.strftime("%Y%m%d-%H%M%S")
-        out = os.path.join(BACKUP_DIR, f"mc-{ts}.tar.gz")
-        run(["tar", "-czf", out, "-C", MC_DIR] + worlds, timeout=300)
-        bks = sorted(os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR) if f.startswith("mc-"))
-        for old in bks[:-5]:
-            try:
-                os.remove(old)
-            except OSError:
-                pass
-        print(f"backup: {out}")
+        if args.auto:
+            # flush RAM -> disk so the signature reflects the latest state
+            if screen_alive():
+                send_console("save-all")
+                time.sleep(3)
+            sig = _world_signature()
+            if sig == _last_sig():
+                print("no world changes since last backup (region/entity chunks unchanged); skipping. Existing auto backups kept (max 5).")
+                return
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            out = os.path.join(BACKUP_DIR, f"mc-auto-{ts}.tar.gz")
+            run(["tar", "-czf", out, "-C", MC_DIR] + worlds, timeout=600)
+            _write_sig(sig)
+            # rotate ONLY auto backups (mc-auto-*); manual mc-* are never touched
+            autos = sorted(f for f in os.listdir(BACKUP_DIR) if f.startswith("mc-auto-"))
+            for old in autos[:-5]:
+                try:
+                    os.remove(os.path.join(BACKUP_DIR, old))
+                except OSError:
+                    pass
+            print(f"auto backup (changes detected): {out}  (keeps last 5 auto backups)")
+        else:
+            # manual: keep ALL versions (never rotate)
+            if screen_alive():
+                send_console("save-all")
+                time.sleep(3)
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            out = os.path.join(BACKUP_DIR, f"mc-{ts}.tar.gz")
+            run(["tar", "-czf", out, "-C", MC_DIR] + worlds, timeout=600)
+            _write_sig(_world_signature())  # advance sig so the next auto skips until a real change
+            manuals = [f for f in os.listdir(BACKUP_DIR) if f.startswith("mc-") and not f.startswith("mc-auto-")]
+            print(f"manual backup: {out}  (manual backups kept indefinitely; total: {len(manuals)})")
     elif args.cmd == "tunnels":
         if args.set == "set" and args.java and args.bedrock:
             write_tunnels(args.java, args.bedrock)

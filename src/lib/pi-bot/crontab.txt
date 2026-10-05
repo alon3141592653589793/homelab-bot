@@ -66,6 +66,12 @@
 # dodge rate limits / home-IP fingerprinting. /proxy status|refresh
 0 */6 * * * python3 /home/alon/secure-pi-bot/scripts/proxy_pool.py --refresh >> /dev/shm/pi-bot/proxy_pool.log 2>&1
 
+# Minecraft automatic world backup (every 6h). Only tars when region/entity
+# chunks actually changed since the last backup (so idle periods DON'T rotate
+# away older backups); keeps the 5 newest auto backups (mc-auto-*). Manual
+# /mc backup keeps all versions indefinitely (mc-* never auto-deleted).
+33 */6 * * * python3 /home/alon/secure-pi-bot/scripts/mc_manage.py backup --auto >> /dev/shm/pi-bot/mc_autobackup.log 2>&1
+
 # Home Front Command (Pikud HaOref) alert monitor — every 1 min. Posts NEW
 # alerts to the command channel, filtered by /setlocation (silent until a
 # location is set). /alerts to view.
