@@ -206,15 +206,22 @@ async def on_ready():
         if ch:
             try:
                 await ch.send("✅ Pi back online — scripts loaded.")
-                # Report any channel IDs that are unset in .env so you can spot
-                # a misconfigured router (e.g. VPN_CHANNEL_ID) right after a reboot.
-                missing = [name for val, name in CHANNEL_ID_VARS if not val]
-                if missing:
-                    await ch.send(
-                        "⚠️ Missing channel IDs (not set in .env): "
-                        + ", ".join(missing)
-                        + "\nCommands for those channels won't respond until you set them."
-                    )
+            except Exception:
+                pass
+
+    # Report any channel IDs that are unset in .env on EVERY ready (not just
+    # manual reboots) so a missing router (e.g. VPN_CHANNEL_ID) is surfaced after
+    # a crash-recovery / auto-restart / power cycle too, not only a /sync.
+    missing = [name for val, name in CHANNEL_ID_VARS if not val]
+    if missing:
+        ch = client.get_channel(COMMAND_CHANNEL_ID)
+        if ch:
+            try:
+                await ch.send(
+                    "⚠️ Missing channel IDs (not set in .env): "
+                    + ", ".join(missing)
+                    + "\nCommands for those channels won't respond until you set them."
+                )
             except Exception:
                 pass
 
