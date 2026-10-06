@@ -215,6 +215,7 @@ def main():
     p_con = sub.add_parser("console"); p_con.add_argument("line", nargs="+")
     sub.add_parser("players")
     sub.add_parser("who")
+    sub.add_parser("notnt")
     p_bak = sub.add_parser("backup")
     p_bak.add_argument("--auto", action="store_true")
     p_tun = sub.add_parser("tunnels")
@@ -410,6 +411,17 @@ def main():
                 if any(ip == "?" for ip in [ipmap.get(n) for n in online]):
                     print("\n(IPs are whatever the server sees; via playit.gg tunnels that's the")
                     print(" tunnel/relay IP, not the player's real home IP unless proxy-protocol is on.)")
+    elif args.cmd == "notnt":
+        # Remove every primed (about-to-explode) TNT entity in the world.
+        # Java entity id for primed TNT is 'tnt'; @e[type=tnt] matches all of them.
+        if not screen_alive():
+            print("server not running -- /mc start first")
+        elif send_console("kill @e[type=tnt]"):
+            time.sleep(1)
+            print("sent 'kill @e[type=tnt]' -- all primed TNT removed.")
+            print(tail(LOG, 8))
+        else:
+            print("failed to send to console")
     elif args.cmd == "backup":
         os.makedirs(BACKUP_DIR, exist_ok=True)
         worlds = _world_dirs()

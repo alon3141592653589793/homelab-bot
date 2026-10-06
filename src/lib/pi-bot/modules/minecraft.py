@@ -36,6 +36,7 @@ async def handle_minecraft_command(client, message):
             "/mc ip          - Show the server IP / how to join (Java + Bedrock)\n"
             "/mc players     - Who's online right now\n"
             "/mc who         - Online players + the IP the server sees for each\n"
+            "/mc notnt       - Remove ALL primed (exploding) TNT from the world\n"
             "/mc log [N]     - Last N lines of the server log (default 30)\n"
             "/mc say <text>  - Broadcast a message in-game\n"
             "/mc cmd <...>   - Run any server console command (op, whitelist, gamemode...)\n"
@@ -84,6 +85,8 @@ async def handle_minecraft_command(client, message):
         await _run(message, ["players"], "Players Online", timeout=15)
     elif c == "/mc who":
         await _run(message, ["who"], "Players Online (IPs)", timeout=15)
+    elif c == "/mc notnt":
+        await _run(message, ["notnt"], "Remove All TNT", timeout=15)
     elif c.startswith("/mc log"):
         parts = content.split()
         sub = ["log"]
