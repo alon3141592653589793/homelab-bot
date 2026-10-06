@@ -72,6 +72,11 @@
 # /mc backup keeps all versions indefinitely (mc-* never auto-deleted).
 33 */6 * * * python3 /home/alon/secure-pi-bot/scripts/mc_manage.py backup --auto >> /dev/shm/pi-bot/mc_autobackup.log 2>&1
 
+# SSH connection event logger - every 1 min. Logs every login / failed attempt
+# / disconnect from /var/log/auth.log to /dev/shm (RAM) + posts a compact digest
+# to the report channel. Needs alon in the `adm` group (one-time hint if not).
+* * * * * python3 /home/alon/secure-pi-bot/scripts/ssh_logger.py >> /dev/shm/pi-bot/ssh_logger.log 2>&1
+
 # Home Front Command (Pikud HaOref) alert monitor — every 1 min. Posts NEW
 # alerts to the command channel, filtered by /setlocation (silent until a
 # location is set). /alerts to view.

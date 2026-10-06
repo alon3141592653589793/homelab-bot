@@ -52,6 +52,7 @@ import integrityCheckPy from "pi-bot:scripts/integrity_check.py";
 import testReplyPy from "pi-bot:scripts/test_reply.py";
 import netScanPy from "pi-bot:scripts/net_scan.py";
 import netScanAutoPy from "pi-bot:scripts/net_scan_auto.py";
+import sshLoggerPy from "pi-bot:scripts/ssh_logger.py";
 
 import piMaintenanceSh from "pi-bot:root/pi-maintenance.sh";
 import piAuditSh from "pi-bot:root/pi-audit.sh";
@@ -167,6 +168,14 @@ const scripts = [
     description: "Logs fan ON/OFF transitions to /dev/shm (RAM). 60s boot delay. No SD writes. Caps at 2000 lines. This Pi's fan is hardwired always-on.",
     tags: ["fan", "logging", "thermal"],
     code: fanLoggerPy,
+  },
+  {
+    id: "ssh-logger",
+    filename: "ssh_logger.py",
+    path: "~/secure-pi-bot/scripts/ssh_logger.py",
+    description: "1-min cron. Logs every SSH login / failed attempt / disconnect from /var/log/auth.log to /dev/shm (RAM, byte-offset tracked) + posts a compact digest to the report channel. Needs alon in the `adm` group (one-time hint if not).",
+    tags: ["ssh", "logging", "security", "auth"],
+    code: sshLoggerPy,
   },
   {
     id: "fan-report",
