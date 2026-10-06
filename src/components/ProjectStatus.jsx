@@ -11,11 +11,6 @@ const SEV = {
 
 const KNOWN_ISSUES = [
   {
-    title: "Discord /help command broken",
-    detail: "The /help command currently does not respond. Routing or handler needs fixing.",
-    sev: "broken",
-  },
-  {
     title: "AI diagnostics fail on API rate limits",
     detail: "Gemini-backed /aidebug and auto-error triggers occasionally fail when the rate limit is hit.",
     sev: "warning",

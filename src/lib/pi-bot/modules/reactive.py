@@ -111,6 +111,92 @@ async def confirm_power_action(client, message, action_name, script_name, descri
 def _led_ctl(mode):
     return subprocess.run(LED_CTL + [mode], capture_output=True, text=True, timeout=10)
 
+
+# Single source of truth for /help. Add a command here and it shows up
+# automatically -- no more hand-editing a formatted string. Rendering pads
+# each section's usage column so the dashes stay aligned for free.
+HELP_SECTIONS = [
+    ("System & Power", [
+        ("/test", "Pipeline check (returns 8)"),
+        ("/nmap", "Scan the whole WiFi network (host discovery)"),
+        ("/status", "Temp/CPU/RAM/IP/uptime"),
+        ("/fastfetch", "Pretty system summary"),
+        ("/restart (/reboot)", "Reboot Pi (requires confirmation)"),
+        ("/shutdown", "Power off Pi (requires confirmation)"),
+        ("/cooldown", "Stop non-essential services to shed heat"),
+    ]),
+    ("Thermal / Fan / LEDs", [
+        ("/fanreport", "Show fan activation log"),
+        ("/leds on|off|auto", "Lights on/off until reboot (off = dark for your sleep) / auto"),
+        ("/leds", "Show LED mode + SSH grace state"),
+    ]),
+    ("Diagnostics", [
+        ("/diag", "Network + SSH + WiFi diagnostics"),
+        ("/boot", "Boot/reboot history + skip-cause diagnosis"),
+        ("/diskhealth", "SD card health (dmesg, read-only, smart)"),
+        ("/integrity", "Verify deployed scripts match GitHub (origin/main)"),
+        ("/logs <name> [n]", "Tail any log file (/logs to list)"),
+    ]),
+    ("Security", [
+        ("/lynis", "Run Lynis security audit now"),
+    ]),
+    ("Reports & API", [
+        ("/weeklyreport", "Post weekly summary now"),
+        ("/weeklyreport start|stop", "Enable/disable scheduled weekly reports"),
+        ("/apifails", "API call failure rate (last 7 days)"),
+    ]),
+    ("Config / Profile / Toggles", [
+        ("/parameters", "Current toggle/setting values (aliases /params, /paramters)"),
+        ("/profile", "Show CPU performance profile"),
+        ("/setprofile restricted|unlimited", "Switch CPU profile"),
+        ("/logging start|stop", "Toggle system logger"),
+        ("/updates start|stop", "Pause or resume automatic apt upgrade + reboot"),
+        ("/bootpause", "Skip ALL lab autostart on next boot (cron off, bot minimal)"),
+        ("/bootresume", "Restore crontab + clear skip flag (then /restart)"),
+    ]),
+    ("Alerts & Location", [
+        ("/alerts", "Current Home Front Command alerts + your location filter"),
+        ("/setlocation <place|off>", "Alert area filter, e.g. ramat gan (or Hebrew); off = all Israel"),
+    ]),
+    ("Proxy", [
+        ("/proxy", "Proxy pool status"),
+        ("/proxy refresh", "Re-fetch + test free proxies"),
+    ]),
+    ("Gofile", [
+        ("/gofile keep <ref>", "Opt a mirror into auto keep-alive (fake-download every 6h)"),
+        ("/gofile forget <ref>", "Stop maintaining a mirror"),
+        ("/gofile keeplist", "List maintained mirrors"),
+        ("/gofile check", "Ping Gofile to see which mirrored files are still alive"),
+    ]),
+    ("Advanced", [
+        ("/aidebug <question>", "Conversational AI diagnostic (optional: model prefix)"),
+        ("/sync", "Pull latest from the repo, reboot"),
+        ("/sync no-reboot", "Same, but skip the reboot"),
+        ("/sync dry-run", "Fetch + list what would change (no write, no reboot)"),
+        ("/gofile [min] [tor] <model|URL>", "Mirror a HF model OR any direct URL to Gofile (streamed, RAM-only). [min] = progress interval; [tor] = download via Tor. e.g. /gofile 10 ollama run hf.co/OWNER/REPO:Q4_K_M | /gofile tor https://x/f.bin"),
+        ("/syncinfo", "When GitHub repo was last updated + when /sync last ran"),
+    ]),
+]
+
+HELP_FOOTER = (
+    "Side channels: #adguard -> /adguard help | #vpn -> /vpn help | #minecraft -> /mc help\n"
+    "/help                 - This message"
+)
+
+
+def _render_help():
+    lines = ["Available commands:"]
+    for title, items in HELP_SECTIONS:
+        lines.append("")
+        lines.append(f"== {title} ==")
+        w = max(len(u) for u, _ in items)
+        for usage, desc in items:
+            lines.append(f"{usage.ljust(w)} - {desc}")
+    lines.append("")
+    lines.append(HELP_FOOTER)
+    return "\n".join(lines)
+
+
 async def handle_reactive_command(client, message):
     content = message.content.strip().lower()
     raw = message.content.strip()
@@ -347,60 +433,6 @@ async def handle_reactive_command(client, message):
         await run_script(message, "log_tail.py", "", args=raw.split()[1:], timeout=15)
 
     elif content == "/help":
-        help_text = (
-            "Available commands:\n"
-            "\n== System & Power ==\n"
-            "/test                 - Pipeline check (returns 8)\n"
-            "/nmap                 - Scan the whole WiFi network (host discovery)\n"
-            "/status               - Temp/CPU/RAM/IP/uptime\n"
-            "/fastfetch            - Pretty system summary\n"
-            "/restart (/reboot)    - Reboot Pi (requires confirmation)\n"
-            "/shutdown             - Power off Pi (requires confirmation)\n"
-            "/cooldown             - Stop non-essential services to shed heat\n"
-            "\n== Thermal / Fan / LEDs ==\n"
-            "/fanreport            - Show fan activation log\n"
-            "/leds on|off|auto     - Lights on/off until reboot (off = dark for your sleep) / auto\n"
-            "/leds                 - Show LED mode + SSH grace state\n"
-            "\n== Diagnostics ==\n"
-            "/diag                 - Network + SSH + WiFi diagnostics\n"
-            "/boot                 - Boot/reboot history + skip-cause diagnosis\n"
-            "/diskhealth           - SD card health (dmesg, read-only, smart)\n"
-            "/integrity            - Verify deployed scripts match GitHub (origin/main)\n"
-            "/logs <name> [n]      - Tail any log file (/logs to list)\n"
-            "\n== Security ==\n"
-            "/lynis                - Run Lynis security audit now\n"
-            "\n== Reports & API ==\n"
-            "/weeklyreport         - Post weekly summary now\n"
-            "/weeklyreport start|stop - Enable/disable scheduled weekly reports\n"
-            "/apifails             - API call failure rate (last 7 days)\n"
-            "\n== Config / Profile / Toggles ==\n"
-            "/parameters           - Current toggle/setting values (aliases /params, /paramters)\n"
-            "/profile              - Show CPU performance profile\n"
-            "/setprofile restricted|unlimited  - Switch CPU profile\n"
-            "/logging start|stop   - Toggle system logger\n"
-            "/updates start|stop   - Pause or resume automatic apt upgrade + reboot\n"
-            "/bootpause            - Skip ALL lab autostart on next boot (cron off, bot minimal)\n"
-            "/bootresume           - Restore crontab + clear skip flag (then /restart)\n"
-            "\n== Alerts & Location ==\n"
-            "/alerts                - Current Home Front Command alerts + your location filter\n"
-            "/setlocation <place|off> - Alert area filter, e.g. ramat gan (or Hebrew); off = all Israel\n"
-            "\n== Proxy ==\n"
-            "/proxy                 - Proxy pool status\n"
-            "/proxy refresh         - Re-fetch + test free proxies\n"
-            "\n== Gofile ==\n"
-            "/gofile keep <ref>     - Opt a mirror into auto keep-alive (fake-download every 6h)\n"
-            "/gofile forget <ref>   - Stop maintaining a mirror\n"
-            "/gofile keeplist       - List maintained mirrors\n"
-            "/gofile check          - Ping Gofile to see which mirrored files are still alive\n"
-            "\n== Advanced ==\n"
-            "/aidebug <question>   - Conversational AI diagnostic (optional: model prefix)\n"
-            "/sync                 - Pull latest from the repo, reboot\n"
-            "/sync no-reboot       - Same, but skip the reboot\n"
-            "/sync dry-run         - Fetch + list what would change (no write, no reboot)\n"
-            "/gofile [min] [tor] <model|URL>  - Mirror a HF model OR any direct URL to Gofile (streamed, RAM-only). [min] = progress interval; [tor] = download via Tor. e.g. /gofile 10 ollama run hf.co/OWNER/REPO:Q4_K_M | /gofile tor https://x/f.bin\n"
-            "/syncinfo             - When GitHub repo was last updated + when /sync last ran\n"
-            "\nSide channels: #adguard -> /adguard help | #vpn -> /vpn help | #minecraft -> /mc help\n"
-            "/help                 - This message"
-        )
+        help_text = _render_help()
         for i in range(0, len(help_text), 1900):
             await message.channel.send(help_text[i:i + 1900])
