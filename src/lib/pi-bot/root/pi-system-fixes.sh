@@ -55,5 +55,16 @@ else
   echo "  -> /etc/rc.local not present; nothing to patch."
 fi
 
+echo "=== 5. Grant bot user read access to /var/log/auth.log ==="
+# ssh_logger.py (cron) reads /var/log/auth.log to track SSH logins/failures.
+# On RPi OS that file is root:adm 0640, so the bot user must be in the adm
+# group. Idempotent: only usermod if not already a member.
+BOT_USER="${SUDO_USER:-alon}"
+if id -nG "$BOT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx adm; then
+  echo "  -> $BOT_USER already in adm group."
+else
+  usermod -aG adm "$BOT_USER" && echo "  -> added $BOT_USER to adm group. Reboot or 'newgrp adm' to activate."
+fi
+
 echo "Done."
 echo "Then reboot and use the /boot Discord command to confirm both services came back."

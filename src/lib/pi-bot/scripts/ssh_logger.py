@@ -137,6 +137,13 @@ def main():
                 f"  sudo usermod -aG adm alon   (then reboot or `newgrp adm`)"
             )
         return
+    # Permissions are fine now -- clear the one-time-warn flag so a future
+    # regression (perms revoked / log rotated out of group) re-alerts.
+    if os.path.exists(PERM_WARN):
+        try:
+            os.remove(PERM_WARN)
+        except OSError:
+            pass
 
     size = os.path.getsize(AUTH_LOG)
     offset = read_offset()
