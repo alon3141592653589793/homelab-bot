@@ -216,6 +216,7 @@ def main():
     sub.add_parser("players")
     sub.add_parser("who")
     sub.add_parser("notnt")
+    p_nw = sub.add_parser("newworld"); p_nw.add_argument("confirm", nargs="?")
     p_bak = sub.add_parser("backup")
     p_bak.add_argument("--auto", action="store_true")
     p_tun = sub.add_parser("tunnels")
@@ -422,6 +423,52 @@ def main():
             print(tail(LOG, 8))
         else:
             print("failed to send to console")
+    elif args.cmd == "newworld":
+        # Generate a fresh world. Destructive: stops the server, backs up the
+        # current world(s) to ~/mc-backups, moves the old world dirs aside
+        # (recoverable), then starts the server so it regenerates a new world.
+        if args.confirm != "confirm":
+            print("This DELETES the current world and generates a brand-new one.")
+            print("The old world is backed up + moved aside (recoverable).")
+            print("To proceed:  /mc newworld confirm")
+            return
+        worlds = _world_dirs()
+        if not worlds:
+            print("no world dirs found -- nothing to replace; just run /mc start")
+            return
+        # 1) stop the server so files aren't locked / corrupted
+        if screen_alive():
+            send_console("stop")
+            for _ in range(30):
+                if not screen_alive():
+                    break
+                time.sleep(2)
+            if screen_alive():
+                run(["screen", "-S", SCREEN, "-X", "quit"])
+        # 2) back up the current worlds (manual backup, kept indefinitely)
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        bak = os.path.join(BACKUP_DIR, f"mc-prenewworld-{ts}.tar.gz")
+        run(["tar", "-czf", bak, "-C", MC_DIR] + worlds, timeout=600)
+        # 3) move old world dirs aside (recoverable, not deleted)
+        attic = os.path.join(MC_DIR, f".worlds-old-{ts}")
+        os.makedirs(attic, exist_ok=True)
+        for w in worlds:
+            try:
+                shutil.move(os.path.join(MC_DIR, w), os.path.join(attic, w))
+            except OSError as e:
+                print(f"warning: could not move {w}: {e}")
+        # 4) start the server -> it generates a fresh world
+        run(["screen", "-dmS", SCREEN, LAUNCH])
+        time.sleep(6)
+        if screen_alive():
+            print(f"old world backed up to {bak}")
+            print(f"old world moved to {attic} (recoverable)")
+            print("started -- generating a new world (~30s for first boot)")
+            auto_chunky()
+        else:
+            err = run(["bash", LAUNCH], timeout=25)
+            print(f"failed to start. Direct run output:\n{err}")
     elif args.cmd == "backup":
         os.makedirs(BACKUP_DIR, exist_ok=True)
         worlds = _world_dirs()

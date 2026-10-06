@@ -37,6 +37,8 @@ async def handle_minecraft_command(client, message):
             "/mc players     - Who's online right now\n"
             "/mc who         - Online players + the IP the server sees for each\n"
             "/mc notnt       - Remove ALL primed (exploding) TNT from the world\n"
+            "/mc newworld    - Generate a brand-new world (backs up + moves old aside)\n"
+            "                  Usage: /mc newworld confirm  (destructive -- asks to confirm)\n"
             "/mc log [N]     - Last N lines of the server log (default 30)\n"
             "/mc say <text>  - Broadcast a message in-game\n"
             "/mc cmd <...>   - Run any server console command (op, whitelist, gamemode...)\n"
@@ -87,6 +89,9 @@ async def handle_minecraft_command(client, message):
         await _run(message, ["who"], "Players Online (IPs)", timeout=15)
     elif c == "/mc notnt":
         await _run(message, ["notnt"], "Remove All TNT", timeout=15)
+    elif c in ("/mc newworld", "/mc newworld confirm"):
+        await _run(message, ["newworld"] + (["confirm"] if c.endswith("confirm") else []),
+                   "New World", timeout=120)
     elif c.startswith("/mc log"):
         parts = content.split()
         sub = ["log"]
