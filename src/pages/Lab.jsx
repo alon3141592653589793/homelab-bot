@@ -2,10 +2,13 @@ import { useState } from "react";
 import { Menu } from "lucide-react";
 import ScriptSidebar from "@/components/ScriptSidebar";
 import CodeViewer from "@/components/CodeViewer";
+import ProjectStatus from "@/components/ProjectStatus";
 import scripts from "@/lib/scriptsData";
 
+const STATUS_ID = "project-status";
+
 export default function Lab() {
-  const [activeId, setActiveId] = useState(scripts[0]?.id || null);
+  const [activeId, setActiveId] = useState(STATUS_ID);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const activeScript = scripts.find((s) => s.id === activeId);
@@ -30,9 +33,10 @@ export default function Lab() {
         onSelect={setActiveId}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
+        statusId={STATUS_ID}
       />
 
-      <CodeViewer script={activeScript} />
+      {activeId === STATUS_ID ? <ProjectStatus /> : <CodeViewer script={activeScript} />}
     </div>
   );
 }

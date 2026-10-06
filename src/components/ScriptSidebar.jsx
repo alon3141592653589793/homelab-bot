@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Code2, ChevronRight, Menu, X, Clock } from "lucide-react";
+import { Code2, ChevronRight, Menu, X, Clock, ClipboardList } from "lucide-react";
 
 const POLLING_RATES = [
   { label: "profile_scheduler.py", rate: "every 1 min", note: "instant exit if no change needed" },
@@ -16,7 +16,7 @@ const POLLING_RATES = [
   { label: "pi-maintenance.sh", rate: "daily 03:00", note: "flush logs + OS upgrade + reboot" },
 ];
 
-export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen, onMobileClose }) {
+export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen, onMobileClose, statusId }) {
   const [pollingOpen, setPollingOpen] = useState(false);
   return (
     <>
@@ -52,6 +52,42 @@ export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen,
 
         {/* Script list */}
         <nav className="flex-1 overflow-y-auto py-2">
+          <button
+            onClick={() => {
+              onSelect(statusId);
+              onMobileClose();
+            }}
+            className={cn(
+              "w-full text-left px-4 py-3 flex items-center gap-3 transition-colors border-b border-[#21262d]",
+              "hover:bg-[#161b22] group",
+              activeId === statusId
+                ? "bg-[#d29922]/10 border-r-2 border-[#d29922]"
+                : "border-r-2 border-transparent"
+            )}
+          >
+            <ClipboardList
+              className={cn(
+                "w-4 h-4 shrink-0",
+                activeId === statusId ? "text-[#d29922]" : "text-[#8b949e] group-hover:text-[#e6edf3]"
+              )}
+            />
+            <span
+              className={cn(
+                "font-mono text-sm",
+                activeId === statusId ? "text-[#d29922]" : "text-[#e6edf3]"
+              )}
+            >
+              Project Status
+            </span>
+            <ChevronRight
+              className={cn(
+                "w-4 h-4 ml-auto transition-opacity",
+                activeId === statusId
+                  ? "opacity-100 text-[#d29922]"
+                  : "opacity-0 group-hover:opacity-50 text-[#8b949e]"
+              )}
+            />
+          </button>
           {scripts.map((script) => (
             <button
               key={script.id}
