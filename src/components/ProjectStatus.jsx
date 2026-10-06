@@ -31,11 +31,6 @@ const KNOWN_ISSUES = [
     sev: "warning",
   },
   {
-    title: "VPN_CHANNEL_ID not configured in .env",
-    detail: "The VPN Discord channel id is unset, so VPN alerts have no destination channel.",
-    sev: "pending",
-  },
-  {
     title: "GCP service account + secrets pending setup",
     detail: "Google Sheets logging (log_sync, weekly_report, lynis_snapshot) falls back to local SD files until the GCP service account is configured.",
     sev: "pending",
@@ -74,11 +69,6 @@ const UNTESTED = [
   {
     title: "Gofile guest-token + website-token handshake",
     detail: "Recently refactored free download-resolution flow (POST /accounts + wt from alljs.js). Not yet verified end-to-end on the Pi.",
-    sev: "untested",
-  },
-  {
-    title: "LED cron reconciler (Asia/Jerusalem TZ)",
-    detail: "Switched to explicit ZoneInfo('Asia/Jerusalem') for the 22:00-10:00 sleep window. Needs on-device confirmation that the window aligns with local wall clock.",
     sev: "untested",
   },
   {
