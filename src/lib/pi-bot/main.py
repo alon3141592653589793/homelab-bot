@@ -44,6 +44,16 @@ CHANNEL_HANDLERS = {
     MINECRAFT_CHANNEL_ID: handle_minecraft_command,
 }
 
+# All Discord channel IDs the bot expects from .env, in display order.
+# Used to report which are unset after a manual /sync or /restart.
+CHANNEL_ID_VARS = [
+    (COMMAND_CHANNEL_ID, "COMMAND_CHANNEL_ID"),
+    (ALERT_CHANNEL_ID, "ALERT_CHANNEL_ID"),
+    (ADGUARD_CHANNEL_ID, "ADGUARD_CHANNEL_ID"),
+    (VPN_CHANNEL_ID, "VPN_CHANNEL_ID"),
+    (MINECRAFT_CHANNEL_ID, "MINECRAFT_CHANNEL_ID"),
+]
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.reactions = True
@@ -196,6 +206,15 @@ async def on_ready():
         if ch:
             try:
                 await ch.send("✅ Pi back online — scripts loaded.")
+                # Report any channel IDs that are unset in .env so you can spot
+                # a misconfigured router (e.g. VPN_CHANNEL_ID) right after a reboot.
+                missing = [name for val, name in CHANNEL_ID_VARS if not val]
+                if missing:
+                    await ch.send(
+                        "⚠️ Missing channel IDs (not set in .env): "
+                        + ", ".join(missing)
+                        + "\nCommands for those channels won't respond until you set them."
+                    )
             except Exception:
                 pass
 
