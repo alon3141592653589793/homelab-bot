@@ -18,7 +18,7 @@ Sub-commands:
   unified <key>                save the unified API key (what ai_debug uses)
   model [auto|auto:fast|auto:smart|<id>]   show/set routing model
   on | off                     enable/disable the gateway for the bot
-                               (off = ai_debug uses Gemini only)
+                               (off = /aidebug is unavailable)
 """
 import os
 import re
@@ -99,8 +99,11 @@ def cli(args, timeout=45):
     the CLI only takes it via --key or a TTY prompt."""
     tok = read(TOKEN_FILE)
     if not tok:
-        return ("No dashboard token saved. Open the FreeLLMAPI dashboard in a browser, sign in, "
-                "copy localStorage 'freellmapi_dashboard_token', then:  /llm token <token>"), 1
+        return ("No dashboard token saved (this is NOT the unified key -- /aidebug works without it; "
+                "it's only needed to list/add/remove provider keys from Discord).\n"
+                "Easier: open the dashboard (ssh -L 3001:127.0.0.1:3001 alon@<pi>, then http://127.0.0.1:3001) "
+                "and add provider keys on its Keys page.\n"
+                "Or: sign in there, copy localStorage 'freellmapi_dashboard_token', then:  /llm token <token>"), 1
     env = {"FREELLMAPI_URL": ROOT_URL, "FREELLMAPI_DASHBOARD_TOKEN": tok}
     return run(["npx", "--yes", "freellmapi"] + args, timeout=timeout, env=env)
 
@@ -197,7 +200,7 @@ def main():
         write_secret(UNIFIED_FILE, rest[0])
         if os.path.exists(UNIFIED_OFF):
             os.remove(UNIFIED_OFF)
-        print("unified key saved -- ai_debug will now try the gateway first.")
+        print("unified key saved -- ai_debug now uses the gateway for all AI calls.")
     elif cmd == "model":
         if not rest:
             print(f"model: {os.getenv('FREELLMAPI_MODEL', 'auto')}  (options: auto | auto:fast | auto:smart | auto:reliable | <model id>)")
@@ -219,7 +222,7 @@ def main():
     elif cmd == "off":
         if os.path.exists(UNIFIED_FILE):
             os.rename(UNIFIED_FILE, UNIFIED_OFF)
-            print("gateway DISABLED for the bot -- ai_debug uses Gemini only. /llm on to re-enable.")
+            print("gateway DISABLED for the bot -- /aidebug will not work until you /llm on.")
         else:
             print("gateway already disabled.")
     else:
