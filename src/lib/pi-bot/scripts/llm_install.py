@@ -86,6 +86,9 @@ def main():
     os.environ["NODE_OPTIONS"] = "--max-old-space-size=1024"
     sh(["npm", "install", "--no-audit", "--no-fund"], cwd=DIR)
     sh(["npm", "run", "build:server"], cwd=DIR)
+    # Dashboard UI (client/dist). Without it the server only exposes the API
+    # and http://127.0.0.1:3001/ answers "Not Found".
+    sh(["npm", "run", "build", "-w", "client"], cwd=DIR)
 
     node = out(["which", "node"])
     os.makedirs(UNIT_DIR, exist_ok=True)
