@@ -120,7 +120,7 @@ WantedBy=default.target
 
     print("\nDONE. Next:")
     print("  1) /llm status")
-    print(f"  2) SSH tunnel:  ssh -L {PORT}:127.0.0.1:{PORT} {user}@<pi-ip>   then open http://127.0.0.1:{PORT}")
+    print(f"  2) SSH tunnel:  ssh -p 54321 -L {PORT}:127.0.0.1:{PORT} {user}@<pi-ip>   then open http://127.0.0.1:{PORT}")
     print("     create the dashboard account, add provider keys on the Keys page")
     print("  3) /llm unified <unified key from the Keys page header>")
     print("  4) /llm token <dashboard token>  (only needed for /llm addkey|keys|rmkey|testkey)")
