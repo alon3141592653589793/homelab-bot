@@ -87,12 +87,6 @@ def main():
     sh(["npm", "install", "--no-audit", "--no-fund"], cwd=DIR)
     sh(["npm", "run", "build:server"], cwd=DIR)
 
-    entry = os.path.join(DIR, "server", "dist", "index.js")
-    if not os.path.exists(entry):
-        print(f"Build finished but {entry} is missing -- cannot create the service.")
-        sys.exit(1)
-    print("build ok")
-
     node = out(["which", "node"])
     os.makedirs(UNIT_DIR, exist_ok=True)
     with open(UNIT, "w") as f:
@@ -120,11 +114,6 @@ WantedBy=default.target
     sh(["systemctl", "--user", "enable", "--now", "freellmapi.service"])
     user = os.environ.get("USER", "alon")
     subprocess.run(["loginctl", "enable-linger", user])  # start at boot without login
-
-    import time
-    time.sleep(8)
-    print("\n--- service log (look for 'Server running' and the one-time setup code) ---")
-    print(out(["journalctl", "--user", "-u", "freellmapi.service", "-n", "25", "--no-pager", "--no-hostname"]))
 
     print("\nDONE. Next:")
     print("  1) /llm status")
