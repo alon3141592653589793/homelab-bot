@@ -5,6 +5,7 @@ import signal
 import asyncio
 import subprocess
 from modules.runner import run_script, confirm_and_run
+from modules.llm import handle_llm_command
 
 LOGGING_FLAG = "/home/alon/secure-pi-bot/.logging_enabled"
 LED_CTL = ["sudo", "-n", "/usr/local/bin/led_ctl"]
@@ -168,6 +169,15 @@ HELP_SECTIONS = [
         ("/gofile keeplist", "List maintained mirrors"),
         ("/gofile check", "Ping Gofile to see which mirrored files are still alive"),
     ]),
+    ("AI Gateway (FreeLLMAPI)", [
+        ("/llm", "Gateway status (service, keys, model)  |  /llm help for all"),
+        ("/llm start|stop|restart", "Control the gateway service"),
+        ("/llm keys", "List provider keys"),
+        ("/llm addkey <platform> <key>", "Add a provider key (your message is auto-deleted)"),
+        ("/llm rmkey|testkey <platform> [id]", "Remove / re-check a provider key"),
+        ("/llm model [name]", "Show/set routing (auto, auto:fast, auto:smart)"),
+        ("/llm on|off", "Use the gateway, or Gemini only"),
+    ]),
     ("Advanced", [
         ("/aidebug <question>", "Conversational AI diagnostic (optional: model prefix)"),
         ("/sync", "Pull latest from the repo, reboot"),
@@ -201,7 +211,10 @@ async def handle_reactive_command(client, message):
     content = message.content.strip().lower()
     raw = message.content.strip()
 
-    if content == "/test":
+    if content == "/llm" or content.startswith("/llm "):
+        await handle_llm_command(client, message)
+
+    elif content == "/test":
         await run_script(message, "test_reply.py", "Testing deploy pipeline...")
 
     elif content == "/nmap":

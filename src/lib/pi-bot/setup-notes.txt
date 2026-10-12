@@ -51,26 +51,32 @@ chmod 700 /home/alon/.secrets
 # ============================================================
 # https://github.com/tashfeenahmed/freellmapi : self-hosted OpenAI-compatible
 # router over ~34 free-tier providers. ai_debug.py calls it first and falls
-# back to direct Gemini if it is down/unconfigured. Needs Docker (see the
-# WireGuard section for `sudo usermod -aG docker alon`).
+# back to direct Gemini if it is down/unconfigured. NO DOCKER needed: it runs
+# directly on Node.js as a systemd USER service (capped at 400MB RAM).
 #
-# 1) Install (binds to 127.0.0.1:3001 only -- never expose it publicly):
-#      git clone https://github.com/tashfeenahmed/freellmapi.git ~/freellmapi
-#      cd ~/freellmapi
-#      printf "ENCRYPTION_KEY=%s\nPORT=3001\n" "$(openssl rand -hex 32)" > .env
-#      docker compose up -d
-# 2) Open http://<pi-ip>:3001 (SSH tunnel: ssh -L 3001:127.0.0.1:3001 alon@<pi>),
-#    create the dashboard account, add provider keys on the Keys page
-#    (Groq, OpenRouter, Cerebras, Google AI Studio, Mistral...).
-# 3) Copy the "unified key" from the Keys page header and store it:
-echo 'freellmapi-YOUR_UNIFIED_KEY' > /home/alon/.secrets/freellmapi_key
-chmod 600 /home/alon/.secrets/freellmapi_key
-# 4) Optional .env overrides (defaults shown):
-#      FREELLMAPI_URL=http://127.0.0.1:3001/v1
-#      FREELLMAPI_MODEL=auto        # or auto:fast / auto:smart / a model id
+# 0) Node 20.18+ and < 25 (Node 22 LTS recommended):
+#      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+#      sudo apt install -y nodejs git
+# 1) After /sync, run the installer ONCE over SSH (takes a few minutes; also
+#    re-run it any time to UPDATE FreeLLMAPI -- it is idempotent):
+#      python3 ~/secure-pi-bot/scripts/llm_install.py
+#    It clones to ~/freellmapi, generates the ENCRYPTION_KEY (BACK UP
+#    ~/freellmapi/.env), builds, and starts freellmapi.service on 127.0.0.1:3001
+#    only (never exposed to the network).
+# 2) Open the dashboard through an SSH tunnel and create the account:
+#      ssh -L 3001:127.0.0.1:3001 alon@<pi-ip>   ->  http://127.0.0.1:3001
+#    Add provider keys on the Keys page (Groq, OpenRouter, Cerebras, Google
+#    AI Studio, Mistral...) -- or later from Discord with /llm addkey.
+# 3) Everything else is Discord (/llm help):
+#      /llm unified <unified key from the Keys page header>   (enables the bot's use)
+#      /llm token <dashboard session token>                   (enables key cmds)
+#         token = browser DevTools > Application > Local Storage >
+#         freellmapi_dashboard_token (your message is auto-deleted)
+#      /llm addkey groq <key> | /llm keys | /llm testkey groq | /llm rmkey groq 3
+#      /llm model auto:fast | /llm on | /llm off | /llm status | /llm log
 # Test:  /aidebug hello   -> header shows model=freellmapi:<served model>
-# Delete the key file to disable the gateway and use Gemini only.
-# Pi RAM note: the container is light (Node + SQLite) but check `docker stats`.
+# /llm off (or deleting ~/.secrets/freellmapi_key) = Gemini only.
+# Needs the bot's "Manage Messages" Discord permission to auto-delete secrets.
 
 # ============================================================
 # UDEV RULE — allow alon to write cpufreq without sudo

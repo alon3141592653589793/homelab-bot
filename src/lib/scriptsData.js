@@ -13,6 +13,9 @@ import vpnPy from "pi-bot:modules/vpn.py";
 import constantsPy from "pi-bot:scripts/constants.py";
 import apiManagerPy from "pi-bot:scripts/api_manager.py";
 import llmGatewayPy from "pi-bot:scripts/llm_gateway.py";
+import llmCtlPy from "pi-bot:scripts/llm_ctl.py";
+import llmInstallPy from "pi-bot:scripts/llm_install.py";
+import llmModulePy from "pi-bot:modules/llm.py";
 import statusPy from "pi-bot:scripts/status.py";
 import cooldownPy from "pi-bot:scripts/cooldown.py";
 import restartPy from "pi-bot:scripts/restart.py";
@@ -129,6 +132,30 @@ const scripts = [
     description: "FreeLLMAPI client. Routes AI calls through a self-hosted OpenAI-compatible router that pools ~34 free LLM providers (far more free requests than one Gemini key). Converts Gemini-style chat + tool calls to OpenAI format and back. Key from ~/.secrets/freellmapi_key; skipped if unset.",
     tags: ["ai", "freellmapi", "gateway", "openai-compatible", "api", "shared"],
     code: llmGatewayPy,
+  },
+  {
+    id: "llm-ctl",
+    filename: "llm_ctl.py",
+    path: "~/secure-pi-bot/scripts/llm_ctl.py",
+    description: "/llm backend: start/stop/restart/log the FreeLLMAPI service, list/add/remove/test provider keys via its CLI, save the unified key + dashboard token (chmod 600), set the routing model, switch the gateway on/off for the bot. Never echoes keys.",
+    tags: ["llm", "freellmapi", "discord", "keys", "systemd"],
+    code: llmCtlPy,
+  },
+  {
+    id: "llm-install",
+    filename: "llm_install.py",
+    path: "~/secure-pi-bot/scripts/llm_install.py",
+    description: "One-time NO-DOCKER installer/updater for FreeLLMAPI: checks Node, clones to ~/freellmapi, generates .env (ENCRYPTION_KEY once), builds, installs a systemd user service (127.0.0.1 only, 400MB cap) with linger so it starts at boot.",
+    tags: ["llm", "freellmapi", "install", "systemd", "setup", "node"],
+    code: llmInstallPy,
+  },
+  {
+    id: "llm-module",
+    filename: "llm.py",
+    path: "~/secure-pi-bot/modules/llm.py",
+    description: "Discord /llm command router. Auto-deletes messages that carry secrets (addkey/token/unified) before running llm_ctl.py.",
+    tags: ["discord", "llm", "freellmapi", "module"],
+    code: llmModulePy,
   },
   {
     id: "status",

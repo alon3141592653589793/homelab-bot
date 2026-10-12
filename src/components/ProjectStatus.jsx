@@ -72,6 +72,11 @@ const UNTESTED = [
     sev: "untested",
   },
   {
+    title: "FreeLLMAPI gateway (no-Docker) + /llm commands",
+    detail: "llm_install.py (Node build + systemd user service), llm_gateway.py (Gemini<->OpenAI tool-call translation) and /llm key management via the project's CLI are written but not yet run on the Pi. The dashboard-token flow for /llm addkey|keys is unverified against a live instance.",
+    sev: "untested",
+  },
+  {
     title: "Minecraft auto-backup change detection",
     detail: "New /mc autobackup + cron (every 6h) skips when region/entity chunks are unchanged and keeps 5 auto versions. Change-detection signature not yet validated against a real world.",
     sev: "untested",

@@ -18,6 +18,12 @@ import os
 import json
 import requests
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv("/home/alon/secure-pi-bot/.env")
+except ImportError:
+    pass
+
 KEY_FILE = "/home/alon/.secrets/freellmapi_key"
 BASE_URL = os.getenv("FREELLMAPI_URL", "http://127.0.0.1:3001/v1").rstrip("/")
 MODEL = os.getenv("FREELLMAPI_MODEL", "auto")
