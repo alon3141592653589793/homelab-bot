@@ -6,6 +6,7 @@ import re
 import subprocess
 import requests
 import api_manager
+import llm_gateway
 from datetime import datetime
 
 try:
@@ -420,6 +421,17 @@ SYS_INSTRUCT = ("You are the Pi diagnostic assistant for a Raspberry Pi home lab
                 "service the context already named. Never suggest destructive actions.")
 
 def call_gemini(contents, models, use_tools=True, web=False, max_tokens=800, system=None):
+    # 1) FreeLLMAPI gateway first (pooled free tiers = many more requests).
+    #    Skipped for web-search calls (needs Gemini's google_search) and for an
+    #    explicit user-chosen gemini model, and when no gateway key is set.
+    if not web and not custom_model and llm_gateway.configured():
+        api_manager.rate_limit("freellmapi")
+        gresp, gmodel = llm_gateway.chat(contents, tools=TOOLS if use_tools else None,
+                                         system=system, max_tokens=max_tokens)
+        api_manager.record("freellmapi", bool(gresp))
+        if gresp:
+            return gresp, gmodel
+    # 2) Fallback: direct Gemini.
     for model in models:
         payload = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}}
         if system:

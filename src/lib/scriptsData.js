@@ -12,6 +12,7 @@ import vpnPy from "pi-bot:modules/vpn.py";
 
 import constantsPy from "pi-bot:scripts/constants.py";
 import apiManagerPy from "pi-bot:scripts/api_manager.py";
+import llmGatewayPy from "pi-bot:scripts/llm_gateway.py";
 import statusPy from "pi-bot:scripts/status.py";
 import cooldownPy from "pi-bot:scripts/cooldown.py";
 import restartPy from "pi-bot:scripts/restart.py";
@@ -120,6 +121,14 @@ const scripts = [
     description: "Cross-script API coordinator: rate limiting, critical-op locks (reboot waits), outage buffering/replay, and a 7-day rolling API call log.",
     tags: ["api", "ratelimit", "outage", "shutdown", "shared"],
     code: apiManagerPy,
+  },
+  {
+    id: "llm-gateway",
+    filename: "llm_gateway.py",
+    path: "~/secure-pi-bot/scripts/llm_gateway.py",
+    description: "FreeLLMAPI client. Routes AI calls through a self-hosted OpenAI-compatible router that pools ~34 free LLM providers (far more free requests than one Gemini key). Converts Gemini-style chat + tool calls to OpenAI format and back. Key from ~/.secrets/freellmapi_key; skipped if unset.",
+    tags: ["ai", "freellmapi", "gateway", "openai-compatible", "api", "shared"],
+    code: llmGatewayPy,
   },
   {
     id: "status",
@@ -237,8 +246,8 @@ const scripts = [
     id: "ai-debug",
     filename: "ai_debug.py",
     path: "~/secure-pi-bot/scripts/ai_debug.py",
-    description: "Token-efficient, context-aware Pi diagnostic assistant (Gemini). MANUAL (/aidebug), AUDIT (--audit, weekly), AUTO-ERROR (thermal/failed-service triggers), AUTO --web (lynis diff). Read-only whitelist only. API key from ~/.secrets/gemini_key.",
-    tags: ["ai", "debug", "gemini", "tool-calling", "minified", "audit"],
+    description: "Token-efficient, context-aware Pi diagnostic assistant. Tries the FreeLLMAPI gateway first (llm_gateway.py), falls back to direct Gemini. MANUAL (/aidebug), AUDIT (--audit, weekly), AUTO-ERROR (thermal/failed-service triggers), AUTO --web (lynis diff, Gemini only). Read-only whitelist only. Keys: ~/.secrets/freellmapi_key (optional) + ~/.secrets/gemini_key.",
+    tags: ["ai", "debug", "gemini", "freellmapi", "tool-calling", "minified", "audit"],
     code: aiDebugPy,
   },
   {

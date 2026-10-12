@@ -17,7 +17,7 @@ OUTAGE_DIR = "/home/alon/secure-pi-bot/outage"
 os.makedirs(SHM, exist_ok=True)
 os.makedirs(OUTAGE_DIR, exist_ok=True)
 
-API_LIMITS = {"gemini": 1.0, "gsheets": 0.4, "gdrive": 0.25}
+API_LIMITS = {"gemini": 1.0, "freellmapi": 0.5, "gsheets": 0.4, "gdrive": 0.25}
 
 
 def rate_limit(provider, min_gap=None):
