@@ -2,10 +2,10 @@
 
 FreeLLMAPI is a self-hosted OpenAI-compatible router that pools the free tiers
 of ~34 LLM providers behind ONE endpoint (/v1/chat/completions) and one
-"unified key". ai_debug.py tries it FIRST (far more free requests than a single
-Gemini key) and falls back to direct Gemini when it is unconfigured/down.
+"unified key". ai_debug.py uses it for ALL normal AI calls (no direct-Gemini
+fallback; only the --web search mode still talks to Gemini directly).
 
-Config (all optional -- if the key is missing the gateway is simply skipped):
+Config (the unified key is required; without it ai_debug reports the error):
   ~/.secrets/freellmapi_key   unified key from the FreeLLMAPI dashboard (chmod 600)
   FREELLMAPI_URL (.env)       default http://127.0.0.1:3001/v1
   FREELLMAPI_MODEL (.env)     default "auto"  (or auto:fast / auto:smart / model id)
@@ -116,11 +116,18 @@ def _to_gemini_response(data):
     return {"candidates": [{"content": {"role": "model", "parts": parts}}]}
 
 
+LAST_ERROR = ""
+
+
 def chat(contents, tools=None, system=None, max_tokens=800, timeout=60):
     """Returns (gemini_shaped_response, served_model_label) or (None, None).
-    Raises nothing: any failure -> (None, None) so the caller falls back."""
+    Raises nothing: any failure -> (None, None); the reason is left in
+    LAST_ERROR so the caller can show it."""
+    global LAST_ERROR
+    LAST_ERROR = ""
     key = _load_key()
     if not key:
+        LAST_ERROR = "no unified key (/llm unified <key>)"
         return None, None
     payload = {
         "model": MODEL,
@@ -136,10 +143,12 @@ def chat(contents, tools=None, system=None, max_tokens=800, timeout=60):
                           headers={"Authorization": f"Bearer {key}"},
                           json=payload, timeout=timeout)
         if r.status_code != 200:
+            LAST_ERROR = f"HTTP {r.status_code}: {r.text[:200]}"
             return None, None
         data = r.json()
         resp = _to_gemini_response(data)
         served = data.get("model") or r.headers.get("x-routed-via") or MODEL
         return resp, f"freellmapi:{served}"
-    except Exception:
+    except Exception as e:
+        LAST_ERROR = f"{type(e).__name__}: {str(e)[:200]}"
         return None, None

@@ -179,7 +179,7 @@ HELP_SECTIONS = [
         ("/llm on|off", "Use the gateway, or Gemini only"),
     ]),
     ("Advanced", [
-        ("/aidebug <question>", "Conversational AI diagnostic (optional: model prefix)"),
+        ("/aidebug <question>", "Conversational AI diagnostic (via the /llm gateway)"),
         ("/sync", "Pull latest from the repo, reboot"),
         ("/sync no-reboot", "Same, but skip the reboot"),
         ("/sync dry-run", "Fetch + list what would change (no write, no reboot)"),
@@ -392,7 +392,7 @@ async def handle_reactive_command(client, message):
             # and on-demand tool prefixes (e.g. "gemini-3.5-flash lynis")
             await run_script(message, "ai_debug.py", "Thinking...", args=rest.split(), timeout=300)
         else:
-            await message.channel.send("Usage: /aidebug <question>\nOptional model prefix: /aidebug [gemini-2.5-flash] <question>")
+            await message.channel.send("Usage: /aidebug <question>\n(Answers come from the /llm gateway; check it with /llm.)")
 
     elif content == "/boot":
         await run_script(message, "boot_diag.py", "Checking boot/reboot history...", timeout=30)

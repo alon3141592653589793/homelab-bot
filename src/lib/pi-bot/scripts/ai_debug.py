@@ -31,13 +31,15 @@ try:
     REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", "0"))
 except ValueError:
     REPORT_CHANNEL_ID = 0
+# Direct Gemini is ONLY used by the --web (Google Search) mode. Everything else
+# goes through the FreeLLMAPI gateway. The key is optional.
 try:
     with open("/home/alon/.secrets/gemini_key") as f:
         GEMINI_KEY = f.read().strip()
 except OSError:
-    print("FAILURE: /home/alon/.secrets/gemini_key not found.")
-    sys.exit(1)
+    GEMINI_KEY = ""
 
+# Used only for the --web direct-Gemini path.
 MODEL_PRIORITY = [
     "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro",
     "gemini-3-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite",
@@ -47,8 +49,9 @@ MODEL_PRIORITY = [
 args = sys.argv[1:]
 mode = "manual"
 custom_model = None
+# A leading "gemini..." token (old model-prefix syntax) is ignored: the gateway picks the model.
 if args and args[0].lower().startswith("gemini"):
-    custom_model = args[0]; args = args[1:]
+    args = args[1:]
 web = False
 if "--web" in args:
     web = True; args = [a for a in args if a != "--web"]
@@ -420,18 +423,23 @@ SYS_INSTRUCT = ("You are the Pi diagnostic assistant for a Raspberry Pi home lab
                 "Call inspect_service(service, action) only to deep-dive a specific failed "
                 "service the context already named. Never suggest destructive actions.")
 
+GATEWAY_ERROR = ""
+
 def call_gemini(contents, models, use_tools=True, web=False, max_tokens=800, system=None):
-    # 1) FreeLLMAPI gateway first (pooled free tiers = many more requests).
-    #    Skipped for web-search calls (needs Gemini's google_search) and for an
-    #    explicit user-chosen gemini model, and when no gateway key is set.
-    if not web and not custom_model and llm_gateway.configured():
+    global GATEWAY_ERROR
+    # All normal AI calls go through the FreeLLMAPI gateway ONLY (no Gemini fallback).
+    if not web:
         api_manager.rate_limit("freellmapi")
         gresp, gmodel = llm_gateway.chat(contents, tools=TOOLS if use_tools else None,
                                          system=system, max_tokens=max_tokens)
         api_manager.record("freellmapi", bool(gresp))
-        if gresp:
-            return gresp, gmodel
-    # 2) Fallback: direct Gemini.
+        if not gresp:
+            GATEWAY_ERROR = llm_gateway.LAST_ERROR or "unknown error"
+        return gresp, gmodel
+    # --web only: direct Gemini with Google Search grounding (the gateway has no equivalent).
+    if not GEMINI_KEY:
+        GATEWAY_ERROR = "--web needs ~/.secrets/gemini_key"
+        return None, None
     for model in models:
         payload = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}}
         if system:
@@ -571,4 +579,4 @@ elif mode == "auto-error":
 if final_text:
     print(f"**AI Debug** [{ts}] mode={mode} model={used_model}\n{final_text}")
 else:
-    print(f"**AI Debug** [{ts}] mode={mode} — no response (all models failed).")
+    print(f"**AI Debug** [{ts}] mode={mode} — no response. Reason: {GATEWAY_ERROR or 'all models failed'}")
