@@ -16,6 +16,7 @@ apart from one extra attempt inside call_gemini().
 """
 import os
 import json
+import time
 import requests
 
 try:
@@ -138,17 +139,24 @@ def chat(contents, tools=None, system=None, max_tokens=800, timeout=60):
     oa_tools = _to_openai_tools(tools)
     if oa_tools:
         payload["tools"] = oa_tools
-    try:
-        r = requests.post(f"{BASE_URL}/chat/completions",
-                          headers={"Authorization": f"Bearer {key}"},
-                          json=payload, timeout=timeout)
-        if r.status_code != 200:
-            LAST_ERROR = f"HTTP {r.status_code}: {r.text[:200]}"
-            return None, None
-        data = r.json()
-        resp = _to_gemini_response(data)
-        served = data.get("model") or r.headers.get("x-routed-via") or MODEL
-        return resp, f"freellmapi:{served}"
-    except Exception as e:
-        LAST_ERROR = f"{type(e).__name__}: {str(e)[:200]}"
-        return None, None
+    # Free upstream providers are flaky (empty completions / 5xx). Retry a few
+    # times with a short pause; the router picks a different provider each time.
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{BASE_URL}/chat/completions",
+                              headers={"Authorization": f"Bearer {key}"},
+                              json=payload, timeout=timeout)
+            if r.status_code != 200:
+                LAST_ERROR = f"HTTP {r.status_code}: {r.text[:300]}"
+                if r.status_code in (429, 500, 502, 503, 504):
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                return None, None
+            data = r.json()
+            resp = _to_gemini_response(data)
+            served = data.get("model") or r.headers.get("x-routed-via") or MODEL
+            return resp, f"freellmapi:{served}"
+        except Exception as e:
+            LAST_ERROR = f"{type(e).__name__}: {str(e)[:200]}"
+            time.sleep(2 * (attempt + 1))
+    return None, None

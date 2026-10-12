@@ -579,4 +579,4 @@ elif mode == "auto-error":
 if final_text:
     print(f"**AI Debug** [{ts}] mode={mode} model={used_model}\n{final_text}")
 else:
-    print(f"**AI Debug** [{ts}] mode={mode} — no response. Reason: {GATEWAY_ERROR or 'all models failed'}")
+    print(f"**AI Debug** [{ts}] mode={mode} — no response. Reason: {(GATEWAY_ERROR or 'all models failed')[:900]}\nTip: the gateway only works as well as the provider keys you add. Check /llm keys and add more with /llm addkey <platform> <key>.")
