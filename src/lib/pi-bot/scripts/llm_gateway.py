@@ -149,6 +149,46 @@ def _to_gemini_response(data):
 LAST_ERROR = ""
 
 
+def generate_image(prompt, timeout=180):
+    """POST /v1/images/generations with model=auto: the gateway routes across
+    ITS OWN pool of image models (enabled in dashboard -> Models -> Image), so no
+    model id is needed here. Returns ({'data': b64} | {'url': str}, label) or (None, None)."""
+    global LAST_ERROR
+    LAST_ERROR = ""
+    key = _load_key()
+    if not key:
+        LAST_ERROR = "no unified key (/llm unified <key>)"
+        return None, None
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{BASE_URL}/images/generations",
+                              headers={"Authorization": f"Bearer {key}"},
+                              json={"model": "auto", "prompt": prompt, "n": 1,
+                                    "response_format": "b64_json"},
+                              timeout=timeout)
+            if r.status_code != 200:
+                LAST_ERROR = f"HTTP {r.status_code}: {r.text[:300]}"
+                if r.status_code in (429, 500, 502, 503, 504):
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                return None, None
+            label = f"freellmapi:{r.headers.get('X-Model') or r.headers.get('x-routed-via') or 'auto'}"
+            if r.headers.get("content-type", "").startswith("image/"):
+                import base64
+                return {"data": base64.b64encode(r.content).decode()}, label
+            item = (r.json().get("data") or [{}])[0]
+            if item.get("b64_json"):
+                return {"data": item["b64_json"]}, label
+            if item.get("url"):
+                return {"url": item["url"]}, label
+            LAST_ERROR = "empty image response"
+            return None, None
+        except Exception as e:
+            LAST_ERROR = f"{type(e).__name__}: {str(e)[:200]}"
+            time.sleep(2 * (attempt + 1))
+    return None, None
+
+
 def chat(contents, tools=None, system=None, max_tokens=800, timeout=60,
          model=None, want_image=False):
     """Returns (gemini_shaped_response, served_model_label) or (None, None).

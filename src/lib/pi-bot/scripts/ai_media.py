@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Vision + image generation through the FreeLLMAPI gateway.
+"""Vision + image generation through the FreeLLMAPI gateway (no model ids needed).
 
   ai_media.py vision <image_url> [question...]   describe / answer about an image
   ai_media.py imagine <prompt...>                generate an image
 
+The gateway does the model selection itself and keeps its catalog current:
+  * vision: any chat request containing an image is routed ONLY to vision-capable
+    models (model "auto"); if none is enabled it answers 422 no_vision_model.
+  * imagine: POST /v1/images/generations routes across its image-model pool
+    (dashboard -> Models -> Image tab: enable the ones you want).
+
 `imagine` writes the PNG to /dev/shm/pi-bot/imagine.png (RAM, no SD wear) and
 prints "IMAGE:<path>" (or "IMAGE_URL:<url>") as its LAST line; the Discord
-module uploads that file. Models: FREELLMAPI_VISION_MODEL / FREELLMAPI_IMAGE_MODEL
-in .env (default: the gateway's FREELLMAPI_MODEL / "auto"). The model you pick
-must actually support images -- check the gateway dashboard's model list.
+module uploads that file.
 """
 import os
 import sys
@@ -26,37 +30,31 @@ def vision(url, question):
         {"text": question or "Describe this image."},
         {"image_url": url},
     ]}]
-    resp, model = llm_gateway.chat(contents, max_tokens=700, timeout=90,
-                                   model=os.getenv("FREELLMAPI_VISION_MODEL"))
+    # model="auto": the gateway restricts itself to vision-capable models.
+    resp, model = llm_gateway.chat(contents, max_tokens=700, timeout=90, model="auto")
     if not resp:
-        print(f"Vision failed: {llm_gateway.LAST_ERROR or 'no response'}\n"
-              "(the routed model may not support images -- set FREELLMAPI_VISION_MODEL in .env)")
+        err = llm_gateway.LAST_ERROR or "no response"
+        hint = ("\nEnable a vision model in the gateway dashboard (Fallback Chain -> models with the Vision badge)."
+                if "no_vision_model" in err else "")
+        print(f"Vision failed: {err}{hint}")
         return
     parts = resp["candidates"][0]["content"]["parts"]
     print(f"**Vision** model={model}\n" + "".join(p.get("text", "") for p in parts))
 
 
 def imagine(prompt):
-    contents = [{"role": "user", "parts": [{"text": prompt}]}]
-    resp, model = llm_gateway.chat(contents, max_tokens=1500, timeout=180, want_image=True,
-                                   model=os.getenv("FREELLMAPI_IMAGE_MODEL"))
-    if not resp:
+    img, model = llm_gateway.generate_image(prompt)
+    if not img:
         print(f"Image generation failed: {llm_gateway.LAST_ERROR or 'no response'}\n"
-              "(set FREELLMAPI_IMAGE_MODEL in .env to a model that can output images)")
+              "(enable image models in the gateway dashboard -> Models -> Image tab)")
         return
-    parts = resp["candidates"][0]["content"]["parts"]
-    text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
-    for p in parts:
-        if "inlineData" in p:
-            os.makedirs(SHM, exist_ok=True)
-            with open(OUT, "wb") as f:
-                f.write(base64.b64decode(p["inlineData"]["data"]))
-            print(f"**Imagine** model={model}\n{text}\nIMAGE:{OUT}")
-            return
-        if "imageUrl" in p:
-            print(f"**Imagine** model={model}\n{text}\nIMAGE_URL:{p['imageUrl']}")
-            return
-    print(f"**Imagine** model={model} returned no image (it likely can't output images).\n{text[:500]}")
+    if "data" in img:
+        os.makedirs(SHM, exist_ok=True)
+        with open(OUT, "wb") as f:
+            f.write(base64.b64decode(img["data"]))
+        print(f"**Imagine** model={model}\nIMAGE:{OUT}")
+    else:
+        print(f"**Imagine** model={model}\nIMAGE_URL:{img['url']}")
 
 
 def main():

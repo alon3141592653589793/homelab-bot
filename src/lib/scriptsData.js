@@ -163,7 +163,7 @@ const scripts = [
     id: "ai-media",
     filename: "ai_media.py",
     path: "~/secure-pi-bot/scripts/ai_media.py",
-    description: "Vision + image generation via the FreeLLMAPI gateway. 'vision <url> [question]' sends an image to a vision model; 'imagine <prompt>' asks an image-output model and saves the PNG to /dev/shm (RAM). Models set by FREELLMAPI_VISION_MODEL / FREELLMAPI_IMAGE_MODEL in .env.",
+    description: "Vision + image generation via the FreeLLMAPI gateway. 'vision <url> [question]' sends an image to a vision model; 'imagine <prompt>' calls the gateway's /v1/images/generations and saves the PNG to /dev/shm (RAM). No model ids to maintain: the gateway auto-routes images to vision-capable models and picks from its own image-model pool.",
     tags: ["ai", "vision", "image", "freellmapi", "discord"],
     code: aiMediaPy,
   },
