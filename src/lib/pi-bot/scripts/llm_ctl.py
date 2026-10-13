@@ -104,11 +104,10 @@ def cli(args, timeout=45):
     the CLI only takes it via --key or a TTY prompt."""
     tok = read(TOKEN_FILE)
     if not tok:
-        return ("No dashboard token saved (this is NOT the unified key -- /aidebug works without it; "
-                "it's only needed to list/add/remove provider keys from Discord).\n"
-                "Easier: open the dashboard (ssh -p 54321 -L 3001:127.0.0.1:3001 alon@<pi>, then http://127.0.0.1:3001) "
-                "and add provider keys on its Keys page.\n"
-                "Or: sign in there, copy localStorage 'freellmapi_dashboard_token', then:  /llm token <token>"), 1
+        return ("Provider keys are managed in the web dashboard (nothing is wrong -- /aidebug works without this).\n"
+                "Open it: ssh -p 54321 -L 3001:127.0.0.1:3001 alon@<pi>, then http://127.0.0.1:3001 -> Keys page.\n"
+                "Only if you want keys/addkey/rmkey/testkey from Discord: sign in there, copy localStorage "
+                "'freellmapi_dashboard_token', then  /llm token <token>"), 1
     env = {"FREELLMAPI_URL": ROOT_URL, "FREELLMAPI_DASHBOARD_TOKEN": tok}
     return run(["npx", "--yes", "freellmapi"] + args, timeout=timeout, env=env)
 
