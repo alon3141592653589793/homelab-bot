@@ -94,9 +94,36 @@ def _to_openai_messages(contents, system=None):
                     msgs.append({"role": "tool", "tool_call_id": cid,
                                  "content": json.dumps(p["functionResponse"].get("response", {}))})
             else:
-                msgs.append({"role": "user",
-                             "content": "".join(p.get("text", "") for p in parts if "text" in p)})
+                text = "".join(p.get("text", "") for p in parts if "text" in p)
+                imgs = [p for p in parts if "image_url" in p or "inlineData" in p]
+                if imgs:
+                    # Vision: OpenAI multimodal content array (URL or base64 data URI).
+                    content = [{"type": "text", "text": text or "Describe this image."}]
+                    for p in imgs:
+                        if "image_url" in p:
+                            url = p["image_url"]
+                        else:
+                            d = p["inlineData"]
+                            url = f"data:{d.get('mimeType', 'image/png')};base64,{d['data']}"
+                        content.append({"type": "image_url", "image_url": {"url": url}})
+                    msgs.append({"role": "user", "content": content})
+                else:
+                    msgs.append({"role": "user", "content": text})
     return msgs
+
+
+def _extract_images(msg):
+    """Image-output models return images as message.images[] (OpenRouter style)
+    or as markdown/data-URI inside content. Returns a list of {mimeType, data|url}."""
+    out = []
+    for im in msg.get("images") or []:
+        url = (im.get("image_url") or {}).get("url") or im.get("url") or ""
+        if url.startswith("data:") and ";base64," in url:
+            head, b64 = url.split(";base64,", 1)
+            out.append({"mimeType": head[5:] or "image/png", "data": b64})
+        elif url:
+            out.append({"url": url})
+    return out
 
 
 def _to_gemini_response(data):
@@ -105,6 +132,8 @@ def _to_gemini_response(data):
     parts = []
     if msg.get("content"):
         parts.append({"text": msg["content"]})
+    for im in _extract_images(msg):
+        parts.append({"inlineData": im} if "data" in im else {"imageUrl": im["url"]})
     for tc in msg.get("tool_calls") or []:
         fn = tc.get("function", {})
         try:
@@ -120,10 +149,16 @@ def _to_gemini_response(data):
 LAST_ERROR = ""
 
 
-def chat(contents, tools=None, system=None, max_tokens=800, timeout=60):
+def chat(contents, tools=None, system=None, max_tokens=800, timeout=60,
+         model=None, want_image=False):
     """Returns (gemini_shaped_response, served_model_label) or (None, None).
     Raises nothing: any failure -> (None, None); the reason is left in
-    LAST_ERROR so the caller can show it."""
+    LAST_ERROR so the caller can show it.
+
+    Vision: put {"image_url": "<https url>"} or {"inlineData": {...}} parts in a
+    user message. Image output: want_image=True asks for modalities
+    ["image","text"]; generated images come back as {"inlineData": ...} parts.
+    `model` overrides FREELLMAPI_MODEL for this call (e.g. a vision model id)."""
     global LAST_ERROR
     LAST_ERROR = ""
     key = _load_key()
@@ -131,11 +166,14 @@ def chat(contents, tools=None, system=None, max_tokens=800, timeout=60):
         LAST_ERROR = "no unified key (/llm unified <key>)"
         return None, None
     payload = {
-        "model": MODEL,
+        "model": model or MODEL,
         "messages": _to_openai_messages(contents, system),
         "max_tokens": max_tokens,
         "temperature": 0.2,
     }
+    if want_image:
+        payload["modalities"] = ["image", "text"]
+        payload["max_tokens"] = max(max_tokens, 1500)
     oa_tools = _to_openai_tools(tools)
     if oa_tools:
         payload["tools"] = oa_tools

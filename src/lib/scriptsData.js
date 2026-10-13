@@ -16,6 +16,8 @@ import llmGatewayPy from "pi-bot:scripts/llm_gateway.py";
 import llmCtlPy from "pi-bot:scripts/llm_ctl.py";
 import llmInstallPy from "pi-bot:scripts/llm_install.py";
 import llmModulePy from "pi-bot:modules/llm.py";
+import aiMediaPy from "pi-bot:scripts/ai_media.py";
+import aiMediaModulePy from "pi-bot:modules/ai_media.py";
 import statusPy from "pi-bot:scripts/status.py";
 import cooldownPy from "pi-bot:scripts/cooldown.py";
 import restartPy from "pi-bot:scripts/restart.py";
@@ -156,6 +158,22 @@ const scripts = [
     description: "Discord /llm command router. Auto-deletes messages that carry secrets (addkey/token/unified) before running llm_ctl.py.",
     tags: ["discord", "llm", "freellmapi", "module"],
     code: llmModulePy,
+  },
+  {
+    id: "ai-media",
+    filename: "ai_media.py",
+    path: "~/secure-pi-bot/scripts/ai_media.py",
+    description: "Vision + image generation via the FreeLLMAPI gateway. 'vision <url> [question]' sends an image to a vision model; 'imagine <prompt>' asks an image-output model and saves the PNG to /dev/shm (RAM). Models set by FREELLMAPI_VISION_MODEL / FREELLMAPI_IMAGE_MODEL in .env.",
+    tags: ["ai", "vision", "image", "freellmapi", "discord"],
+    code: aiMediaPy,
+  },
+  {
+    id: "ai-media-module",
+    filename: "ai_media.py",
+    path: "~/secure-pi-bot/modules/ai_media.py",
+    description: "Discord /vision (attach an image + question) and /imagine (prompt -> image posted back) command handler.",
+    tags: ["discord", "vision", "image", "module"],
+    code: aiMediaModulePy,
   },
   {
     id: "status",
