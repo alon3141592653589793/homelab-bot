@@ -61,19 +61,22 @@ def transcribe(audio_url):
 
 
 def speak(text):
-    """Returns (path, error). Writes an mp3 to RAM."""
+    """Returns (path, model_label, error). Writes an mp3 to RAM."""
     os.makedirs(SHM, exist_ok=True)
+    # No hardcoded voice: "alloy" is OpenAI-specific and providers that don't
+    # know it fall back to a (possibly low-quality) default. Omitting it lets
+    # the gateway/provider pick its best available voice.
     r = requests.post(f"{llm_gateway.BASE_URL}/audio/speech",
                       headers=_headers(),
-                      json={"model": "auto", "input": text[:1500], "voice": "alloy"},
+                      json={"model": "auto", "input": text[:1500]},
                       timeout=120)
     if r.status_code != 200:
-        return None, f"speech HTTP {r.status_code}: {r.text[:250]}"
+        return None, "", f"speech HTTP {r.status_code}: {r.text[:250]}"
     if not r.content:
-        return None, "empty audio response"
+        return None, "", "empty audio response"
     with open(OUT_FILE, "wb") as f:
         f.write(r.content)
-    return OUT_FILE, None
+    return OUT_FILE, r.headers.get("X-Routed-Via") or r.headers.get("X-Model") or "auto", None
 
 
 def answer(question):
@@ -90,8 +93,11 @@ def main():
         print("No gateway key saved. Add the unified key first (see setup notes).")
         return
     if len(a) >= 2 and a[0] == "say":
-        path, err = speak(" ".join(a[1:]))
-        print(f"Voice failed: {err}\n(enable a speech model in the gateway dashboard -> Models -> Audio)" if err else f"AUDIO:{path}")
+        path, model, err = speak(" ".join(a[1:]))
+        if err:
+            print(f"Voice failed: {err}\n(enable a speech model in the gateway dashboard -> Models -> Audio)")
+        else:
+            print(f"**Say** model={model}\nAUDIO:{path}")
     elif len(a) >= 2 and a[0] == "talk":
         text, err = transcribe(a[1])
         if err:
@@ -101,9 +107,9 @@ def main():
         if not reply:
             print(f"You said: {text}\nAI failed: {llm_gateway.LAST_ERROR or 'no response'}")
             return
-        path, err = speak(reply)
+        path, model, err = speak(reply)
         out = f"**You said:** {text}\n**Reply:** {reply}"
-        print(out + (f"\n(voice failed: {err})" if err else f"\nAUDIO:{path}"))
+        print(out + (f"\n(voice failed: {err})" if err else f"\n**Voice** model={model}\nAUDIO:{path}"))
     else:
         print(__doc__)
 
