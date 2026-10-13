@@ -189,7 +189,7 @@ const scripts = [
     id: "ai-voice-module",
     filename: "ai_voice.py",
     path: "~/secure-pi-bot/modules/ai_voice.py",
-    description: "Discord /talk (attach a voice message -> voice reply) and /say <text> (text -> audio message) command handler.",
+    description: "Discord auto-listen: any voice message / audio file sent in the channel is heard and answered with a voice reply (no command needed). /say <text> speaks text as an audio message.",
     tags: ["discord", "voice", "module"],
     code: aiVoiceModulePy,
   },

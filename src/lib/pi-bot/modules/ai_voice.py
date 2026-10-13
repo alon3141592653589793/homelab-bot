@@ -1,4 +1,10 @@
-"""Discord handlers for /talk (voice message in -> voice reply) and /say (text -> voice)."""
+"""Discord handlers for voice messages and /say (text -> voice).
+
+Auto-listen: any voice message or audio file sent in the command channel is
+heard automatically — no command needed (Discord sends voice messages as
+their own message with no text, so a /talk prefix can't ride along).
+/say <text>: Pi speaks the text back as an audio message.
+"""
 import os
 import asyncio
 import subprocess
@@ -13,7 +19,8 @@ def _run(args, timeout):
     return (r.stdout or r.stderr or "No output.").strip()
 
 
-def _audio_url(message):
+def has_audio_attachment(message):
+    """Returns the audio attachment's url, or "" if none."""
     for a in message.attachments:
         if (a.content_type or "").startswith("audio") or a.filename.lower().endswith(AUDIO_EXT):
             return a.url
@@ -31,24 +38,25 @@ async def _send_result(message, out):
         await message.channel.send(text[:1900])
 
 
+async def auto_listen(client, message):
+    """Hear a voice message / audio recording and reply with voice."""
+    url = has_audio_attachment(message)
+    if not url:
+        return False
+    await message.channel.send("Listening...")
+    try:
+        out = await asyncio.to_thread(_run, ["talk", url], 240)
+    except subprocess.TimeoutExpired:
+        await message.channel.send("Timed out.")
+        return True
+    await _send_result(message, out)
+    return True
+
+
 async def handle_voice_command(client, message):
-    """Returns True if the message was /talk or /say."""
+    """Returns True if the message was /say."""
     raw = message.content.strip()
     low = raw.lower()
-
-    if low.startswith("/talk"):
-        url = _audio_url(message)
-        if not url:
-            await message.channel.send("Usage: record a voice message (or attach an audio file) and send it with `/talk` as the message text.")
-            return True
-        await message.channel.send("Listening...")
-        try:
-            out = await asyncio.to_thread(_run, ["talk", url], 240)
-        except subprocess.TimeoutExpired:
-            await message.channel.send("Timed out.")
-            return True
-        await _send_result(message, out)
-        return True
 
     if low.startswith("/say"):
         text = raw[4:].strip()
