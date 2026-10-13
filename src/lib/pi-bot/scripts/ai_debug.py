@@ -348,16 +348,21 @@ def handle_inspect_service(service, action, lines=50):
             return f"(err: {e})"
     return f"(unknown action: {action})"
 
-def red_flags():
-    flags = []
+def current_temp():
     try:
         with open("/sys/class/thermal/thermal_zone0/temp") as f:
-            t = int(f.read()) / 1000.0
+            return int(f.read()) / 1000.0
+    except (OSError, ValueError):
+        return None
+
+def red_flags():
+    """Only REAL problems. Normal readings must never appear here (the AI treats
+    every entry as an alarm); healthy vitals go in build_context's 'VITALS' line."""
+    flags = []
+    t = current_temp()
+    if t is not None:
         if t >= 70: flags.append(f"HIGH TEMP {t:.1f}C")
         elif t >= 60: flags.append(f"WARM {t:.1f}C")
-        else: flags.append(f"temp {t:.1f}C")
-    except OSError:
-        pass
     if psutil:
         vm = psutil.virtual_memory()
         if vm.percent >= 90: flags.append(f"HIGH RAM {vm.percent:.0f}%")
@@ -390,7 +395,10 @@ def red_flags():
 
 def build_context(audit):
     r = red_flags()
-    out = ["RED FLAGS: " + (" | ".join(r) if r else "none")]
+    t = current_temp()
+    out = ["RED FLAGS: " + (" | ".join(r) if r else "none (system healthy)")]
+    if t is not None:
+        out.append(f"VITALS (informational, not problems): temp={t:.1f}C")
     if audit:
         out.append("FULL SYSTEM INFO (minified):")
         for name in INFO:
@@ -421,7 +429,11 @@ SYS_INSTRUCT = ("You are the Pi diagnostic assistant for a Raspberry Pi home lab
                 "error strings, service names). Call get_info(source) for a read-only "
                 "diagnostic only when the provided context lacks the detail you need. "
                 "Call inspect_service(service, action) only to deep-dive a specific failed "
-                "service the context already named. Never suggest destructive actions.")
+                "service the context already named. Never suggest destructive actions. "
+                "RED FLAGS lists only real problems; 'none' means healthy, and VITALS are "
+                "informational readings, not problems. If the user's message is a test or "
+                "has no real question, reply with a one-line health summary of the vitals "
+                "(no 'false alarm' language, no offers to check more).")
 
 GATEWAY_ERROR = ""
 
