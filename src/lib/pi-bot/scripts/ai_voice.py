@@ -29,6 +29,11 @@ MAX_BYTES = 20 * 1024 * 1024
 SYSTEM = ("You are the voice of a Raspberry Pi home lab assistant. Reply in at most "
           "3 short, plain spoken sentences. No markdown, no lists, no emojis.")
 
+# Voice routing mode (set by /llm voice fast|slow). fast = auto:fast (speed),
+# slow = auto:smart (quality). Falls back to plain "auto" if unset/unknown.
+VOICE_MODE = os.getenv("FREELLMAPI_VOICE", "auto")
+VOICE_MODEL = {"fast": "auto:fast", "slow": "auto:smart"}.get(VOICE_MODE, "auto")
+
 
 def _headers():
     return {"Authorization": f"Bearer {llm_gateway._load_key()}"}
@@ -68,7 +73,7 @@ def speak(text):
     # the gateway/provider pick its best available voice.
     r = requests.post(f"{llm_gateway.BASE_URL}/audio/speech",
                       headers=_headers(),
-                      json={"model": "auto", "input": text[:1500]},
+                      json={"model": VOICE_MODEL, "input": text[:1500]},
                       timeout=120)
     if r.status_code != 200:
         return None, "", f"speech HTTP {r.status_code}: {r.text[:250]}"

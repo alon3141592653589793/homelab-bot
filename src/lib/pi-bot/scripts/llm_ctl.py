@@ -133,6 +133,7 @@ def main():
         print(f"bot uses gateway: {'ON' if on else ('OFF (disabled)' if off else 'OFF (no unified key)')}")
         print(f"unified key: {'saved' if (on or off) else 'missing'}")
         print(f"model: {os.getenv('FREELLMAPI_MODEL', 'auto')}")
+        print(f"voice: {os.getenv('FREELLMAPI_VOICE', 'auto')}  (fast | slow | auto)")
     elif cmd in ("start", "stop", "restart"):
         if need_installed():
             out, rc = svc(cmd)
@@ -162,6 +163,16 @@ def main():
             return
         set_env_var("FREELLMAPI_MODEL", m)
         print(f"model set to '{m}' in .env -- used by the NEXT ai_debug run (no restart needed).")
+    elif cmd == "voice":
+        if not rest:
+            print(f"voice: {os.getenv('FREELLMAPI_VOICE', 'auto')}  (options: fast | slow | auto)")
+            return
+        v = rest[0].lower()
+        if v not in ("fast", "slow", "auto"):
+            print("invalid voice mode (use: fast | slow | auto)")
+            return
+        set_env_var("FREELLMAPI_VOICE", v)
+        print(f"voice mode set to '{v}' -- used by the NEXT /say or voice message (no restart needed).")
     elif cmd == "on":
         if os.path.exists(UNIFIED_OFF) and not os.path.exists(UNIFIED_FILE):
             os.rename(UNIFIED_OFF, UNIFIED_FILE)
