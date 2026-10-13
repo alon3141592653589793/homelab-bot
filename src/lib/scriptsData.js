@@ -209,7 +209,7 @@ const scripts = [
     id: "ssh-logger",
     filename: "ssh_logger.py",
     path: "~/secure-pi-bot/scripts/ssh_logger.py",
-    description: "1-min cron. Logs every SSH login / failed attempt / disconnect from /var/log/auth.log to /dev/shm (RAM, byte-offset tracked) + posts a compact digest to the report channel. Needs alon in the `adm` group (one-time hint if not).",
+    description: "1-min cron. Logs every SSH login / failed attempt / disconnect from /var/log/auth.log to /dev/shm (RAM, byte-offset tracked) + posts a compact digest to the report channel. Reads auth.log, or falls back to journald if it's missing/unreadable. If no source works it posts ONE message naming the exact cause + fix; the 'already warned' marker is kept on disk so it no longer repeats every boot. Detailed diagnostics -> /logs ssh_logger.",
     tags: ["ssh", "logging", "security", "auth"],
     code: sshLoggerPy,
   },
