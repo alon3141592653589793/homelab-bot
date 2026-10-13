@@ -49,6 +49,11 @@ ID_RE = re.compile(r"^\d{1,9}$")
 def run(cmd, timeout=60, env=None):
     try:
         e = dict(os.environ)
+        # The bot's environment has no user session bus, so `systemctl --user`
+        # failed with "Failed to connect to bus". Point it at the lingering user bus.
+        uid = os.getuid()
+        e.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+        e.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{uid}/bus")
         e.update(env or {})
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=e)
         return ((r.stdout or "") + (r.stderr or "")).strip(), r.returncode
