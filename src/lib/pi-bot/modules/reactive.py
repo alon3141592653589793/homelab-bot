@@ -172,9 +172,6 @@ HELP_SECTIONS = [
     ("AI Gateway (FreeLLMAPI)", [
         ("/llm", "Gateway status (service, keys, model)  |  /llm help for all"),
         ("/llm start|stop|restart", "Control the gateway service"),
-        ("/llm keys", "List provider keys"),
-        ("/llm addkey <platform> <key>", "Add a provider key (your message is auto-deleted)"),
-        ("/llm rmkey|testkey <platform> [id]", "Remove / re-check a provider key"),
         ("/llm model [name]", "Show/set routing (auto, auto:fast, auto:smart)"),
         ("/llm on|off", "Use the gateway, or Gemini only"),
     ]),

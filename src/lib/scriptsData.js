@@ -137,7 +137,7 @@ const scripts = [
     id: "llm-ctl",
     filename: "llm_ctl.py",
     path: "~/secure-pi-bot/scripts/llm_ctl.py",
-    description: "/llm backend: start/stop/restart/log the FreeLLMAPI service, list/add/remove/test provider keys via its CLI, save the unified key + dashboard token (chmod 600), set the routing model, switch the gateway on/off for the bot. Never echoes keys.",
+    description: "/llm backend: start/stop/restart/log the FreeLLMAPI service, save the unified key (chmod 600), set the routing model, switch the gateway on/off for the bot. Never echoes keys.",
     tags: ["llm", "freellmapi", "discord", "keys", "systemd"],
     code: llmCtlPy,
   },

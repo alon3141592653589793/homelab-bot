@@ -2,19 +2,13 @@
 """Control the self-hosted FreeLLMAPI gateway from Discord (/llm ...).
 
 No Docker: FreeLLMAPI runs as the USER systemd service 'freellmapi.service'
-(Node 20+, installed in ~/freellmapi). Provider keys are managed through the
-project's own CLI (`npx freellmapi keys ...`), which authenticates with a
-dashboard session token stored at ~/.secrets/freellmapi_dash_token.
+(Node 20+, installed in ~/freellmapi). Provider keys are managed in the
+FreeLLMAPI web dashboard (Keys page), not from Discord.
 
 Sub-commands:
-  status                       service state + reachability + key/model counts
+  status                       service state + reachability + gateway/model state
   start | stop | restart       control the service
   log [N]                      last N lines of the service journal
-  keys                         list provider keys (ids, platform, state)
-  addkey <platform> <key>      add + validate a provider key
-  rmkey <platform> [id]        remove a provider key
-  testkey <platform> [id]      re-check stored key(s)
-  token <dashboard-token>      save the dashboard session token (for keys cmds)
   unified <key>                save the unified API key (what ai_debug uses)
   model [auto|auto:fast|auto:smart|<id>]   show/set routing model
   on | off                     enable/disable the gateway for the bot
@@ -37,13 +31,10 @@ INSTALL_DIR = os.path.join(HOME, "freellmapi")
 SECRETS = os.path.join(HOME, ".secrets")
 UNIFIED_FILE = os.path.join(SECRETS, "freellmapi_key")
 UNIFIED_OFF = UNIFIED_FILE + ".disabled"
-TOKEN_FILE = os.path.join(SECRETS, "freellmapi_dash_token")
 BOT_ENV = os.path.join(HOME, "secure-pi-bot", ".env")
 URL = os.getenv("FREELLMAPI_URL", "http://127.0.0.1:3001/v1").rstrip("/")
 ROOT_URL = URL[:-3] if URL.endswith("/v1") else URL
 SERVICE = "freellmapi.service"
-PLATFORM_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,40}$")
-ID_RE = re.compile(r"^\d{1,9}$")
 
 
 def run(cmd, timeout=60, env=None):
@@ -98,20 +89,6 @@ def reachable():
         return hasattr(e, "code")
 
 
-def cli(args, timeout=45):
-    """Run the FreeLLMAPI CLI. Token is passed via the ENVIRONMENT, never argv,
-    so it can't show up in `ps`. A provider key (addkey) is the one exception:
-    the CLI only takes it via --key or a TTY prompt."""
-    tok = read(TOKEN_FILE)
-    if not tok:
-        return ("Provider keys are managed in the web dashboard (nothing is wrong -- /aidebug works without this).\n"
-                "Open it: ssh -p 54321 -L 3001:127.0.0.1:3001 alon@<pi>, then http://127.0.0.1:3001 -> Keys page.\n"
-                "Only if you want keys/addkey/rmkey/testkey from Discord: sign in there, copy localStorage "
-                "'freellmapi_dashboard_token', then  /llm token <token>"), 1
-    env = {"FREELLMAPI_URL": ROOT_URL, "FREELLMAPI_DASHBOARD_TOKEN": tok}
-    return run(["npx", "--yes", "freellmapi"] + args, timeout=timeout, env=env)
-
-
 def need_installed():
     if installed():
         return True
@@ -154,7 +131,7 @@ def main():
         on = os.path.exists(UNIFIED_FILE)
         off = os.path.exists(UNIFIED_OFF)
         print(f"bot uses gateway: {'ON' if on else ('OFF (disabled)' if off else 'OFF (no unified key)')}")
-        print(f"unified key: {'saved' if (on or off) else 'missing'} | dashboard token: {'saved' if read(TOKEN_FILE) else 'missing'}")
+        print(f"unified key: {'saved' if (on or off) else 'missing'}")
         print(f"model: {os.getenv('FREELLMAPI_MODEL', 'auto')}")
     elif cmd in ("start", "stop", "restart"):
         if need_installed():
@@ -167,36 +144,6 @@ def main():
         out, _ = run(["journalctl", "--user", "-u", SERVICE, "-n", str(n),
                       "--no-pager", "--no-hostname"], timeout=15)
         print(out[-1800:] or "(no log)")
-    elif cmd == "keys":
-        out, rc = cli(["keys", "list"])
-        print(out[-1800:] or "(no keys)")
-    elif cmd == "addkey":
-        if len(rest) < 2 or not PLATFORM_RE.match(rest[0]):
-            print("Usage: /llm addkey <platform> <provider-key>\nExample: /llm addkey groq gsk_xxx\n(platforms: groq, google, cerebras, openrouter, mistral, ...)")
-            return
-        out, rc = cli(["keys", "add", rest[0], "--key", rest[1]], timeout=60)
-        # never echo the key back
-        print((out.replace(rest[1], "***") or "done")[-1500:])
-    elif cmd == "rmkey":
-        if not rest or not PLATFORM_RE.match(rest[0]) or (len(rest) > 1 and not ID_RE.match(rest[1])):
-            print("Usage: /llm rmkey <platform> [id]   (ids from /llm keys)")
-            return
-        args = ["keys", "remove", rest[0]] + (["--id", rest[1]] if len(rest) > 1 else [])
-        out, rc = cli(args)
-        print(out[-1500:] or "removed")
-    elif cmd == "testkey":
-        if not rest or not PLATFORM_RE.match(rest[0]) or (len(rest) > 1 and not ID_RE.match(rest[1])):
-            print("Usage: /llm testkey <platform> [id]")
-            return
-        args = ["keys", "test", rest[0]] + (["--id", rest[1]] if len(rest) > 1 else [])
-        out, rc = cli(args, timeout=90)
-        print(out[-1500:] or ("healthy" if rc == 0 else "check failed"))
-    elif cmd == "token":
-        if not rest:
-            print("Usage: /llm token <dashboard-session-token>\nGet it: open the dashboard, sign in, DevTools > Application > Local Storage > freellmapi_dashboard_token")
-            return
-        write_secret(TOKEN_FILE, rest[0])
-        print("dashboard token saved (chmod 600). /llm keys to verify.")
     elif cmd == "unified":
         if not rest:
             print("Usage: /llm unified <freellmapi-unified-key>   (Keys page header in the dashboard)")

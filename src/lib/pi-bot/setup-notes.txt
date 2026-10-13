@@ -66,13 +66,9 @@ chmod 700 /home/alon/.secrets
 # 2) Open the dashboard through an SSH tunnel and create the account:
 #      ssh -L 3001:127.0.0.1:3001 alon@<pi-ip>   ->  http://127.0.0.1:3001
 #    Add provider keys on the Keys page (Groq, OpenRouter, Cerebras, Google
-#    AI Studio, Mistral...) -- or later from Discord with /llm addkey.
+#    AI Studio, Mistral...). Provider keys are managed ONLY in the web dashboard.
 # 3) Everything else is Discord (/llm help):
 #      /llm unified <unified key from the Keys page header>   (enables the bot's use)
-#      /llm token <dashboard session token>                   (enables key cmds)
-#         token = browser DevTools > Application > Local Storage >
-#         freellmapi_dashboard_token (your message is auto-deleted)
-#      /llm addkey groq <key> | /llm keys | /llm testkey groq | /llm rmkey groq 3
 #      /llm model auto:fast | /llm on | /llm off | /llm status | /llm log
 # Test:  /aidebug hello   -> header shows model=freellmapi:<served model>
 # /llm off (or deleting ~/.secrets/freellmapi_key) = Gemini only.
