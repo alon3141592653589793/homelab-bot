@@ -7,6 +7,7 @@ import subprocess
 from modules.runner import run_script, confirm_and_run
 from modules.llm import handle_llm_command
 from modules.ai_media import handle_media_command
+from modules.ai_voice import handle_voice_command
 
 LOGGING_FLAG = "/home/alon/secure-pi-bot/.logging_enabled"
 LED_CTL = ["sudo", "-n", "/usr/local/bin/led_ctl"]
@@ -177,6 +178,8 @@ HELP_SECTIONS = [
         ("/llm on|off", "Use the gateway, or Gemini only"),
         ("/vision <question>", "Attach an image and ask about it (vision model)"),
         ("/imagine <prompt>", "Generate an image (image-output model)"),
+        ("/talk", "Attach a voice message; the Pi answers with a voice reply"),
+        ("/say <text>", "Pi speaks the text as an audio message"),
     ]),
     ("Advanced", [
         ("/aidebug <question>", "Conversational AI diagnostic (via the /llm gateway)"),
@@ -216,6 +219,9 @@ async def handle_reactive_command(client, message):
 
     elif content.startswith(("/vision", "/imagine")):
         await handle_media_command(client, message)
+
+    elif content.startswith(("/talk", "/say")):
+        await handle_voice_command(client, message)
 
     elif content == "/test":
         await run_script(message, "test_reply.py", "Testing deploy pipeline...")

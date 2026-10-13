@@ -18,6 +18,8 @@ import llmInstallPy from "pi-bot:scripts/llm_install.py";
 import llmModulePy from "pi-bot:modules/llm.py";
 import aiMediaPy from "pi-bot:scripts/ai_media.py";
 import aiMediaModulePy from "pi-bot:modules/ai_media.py";
+import aiVoicePy from "pi-bot:scripts/ai_voice.py";
+import aiVoiceModulePy from "pi-bot:modules/ai_voice.py";
 import statusPy from "pi-bot:scripts/status.py";
 import cooldownPy from "pi-bot:scripts/cooldown.py";
 import restartPy from "pi-bot:scripts/restart.py";
@@ -174,6 +176,22 @@ const scripts = [
     description: "Discord /vision (attach an image + question) and /imagine (prompt -> image posted back) command handler.",
     tags: ["discord", "vision", "image", "module"],
     code: aiMediaModulePy,
+  },
+  {
+    id: "ai-voice",
+    filename: "ai_voice.py",
+    path: "~/secure-pi-bot/scripts/ai_voice.py",
+    description: "Voice messages via the FreeLLMAPI gateway. 'talk <audio url>' transcribes (/v1/audio/transcriptions), asks the AI for a short spoken-style answer, and speaks it (/v1/audio/speech); 'say <text>' just speaks. Audio is kept in /dev/shm (RAM). No model ids: needs a transcription + speech model enabled in the gateway dashboard (Models -> Audio).",
+    tags: ["ai", "voice", "tts", "stt", "freellmapi", "discord"],
+    code: aiVoicePy,
+  },
+  {
+    id: "ai-voice-module",
+    filename: "ai_voice.py",
+    path: "~/secure-pi-bot/modules/ai_voice.py",
+    description: "Discord /talk (attach a voice message -> voice reply) and /say <text> (text -> audio message) command handler.",
+    tags: ["discord", "voice", "module"],
+    code: aiVoiceModulePy,
   },
   {
     id: "status",
