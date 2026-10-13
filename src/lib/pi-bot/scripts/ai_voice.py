@@ -29,10 +29,14 @@ MAX_BYTES = 20 * 1024 * 1024
 SYSTEM = ("You are the voice of a Raspberry Pi home lab assistant. Reply in at most "
           "3 short, plain spoken sentences. No markdown, no lists, no emojis.")
 
-# Voice routing mode (set by /llm voice fast|slow). fast = auto:fast (speed),
-# slow = auto:smart (quality). Falls back to plain "auto" if unset/unknown.
+# Voice mode (set by /llm voice fast|slow|auto). The gateway's audio endpoint
+# only accepts "auto" or a specific model id (NOT auto:fast/auto:smart), so each
+# mode stores its own model id and falls back to "auto" if unset.
 VOICE_MODE = os.getenv("FREELLMAPI_VOICE", "auto")
-VOICE_MODEL = {"fast": "auto:fast", "slow": "auto:smart"}.get(VOICE_MODE, "auto")
+VOICE_MODEL = {
+    "fast": os.getenv("FREELLMAPI_VOICE_FAST") or "auto",
+    "slow": os.getenv("FREELLMAPI_VOICE_SLOW") or "auto",
+}.get(VOICE_MODE, "auto")
 
 
 def _headers():

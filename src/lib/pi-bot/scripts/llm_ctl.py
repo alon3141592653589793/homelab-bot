@@ -133,7 +133,10 @@ def main():
         print(f"bot uses gateway: {'ON' if on else ('OFF (disabled)' if off else 'OFF (no unified key)')}")
         print(f"unified key: {'saved' if (on or off) else 'missing'}")
         print(f"model: {os.getenv('FREELLMAPI_MODEL', 'auto')}")
-        print(f"voice: {os.getenv('FREELLMAPI_VOICE', 'auto')}  (fast | slow | auto)")
+        _vm = os.getenv("FREELLMAPI_VOICE", "auto")
+        _vmodel = {"fast": os.getenv("FREELLMAPI_VOICE_FAST") or "auto",
+                   "slow": os.getenv("FREELLMAPI_VOICE_SLOW") or "auto"}.get(_vm, "auto")
+        print(f"voice: {_vm} ({_vmodel})")
     elif cmd in ("start", "stop", "restart"):
         if need_installed():
             out, rc = svc(cmd)
@@ -165,14 +168,29 @@ def main():
         print(f"model set to '{m}' in .env -- used by the NEXT ai_debug run (no restart needed).")
     elif cmd == "voice":
         if not rest:
-            print(f"voice: {os.getenv('FREELLMAPI_VOICE', 'auto')}  (options: fast | slow | auto)")
+            mode = os.getenv("FREELLMAPI_VOICE", "auto")
+            fast = os.getenv("FREELLMAPI_VOICE_FAST") or "(unset -> auto)"
+            slow = os.getenv("FREELLMAPI_VOICE_SLOW") or "(unset -> auto)"
+            print(f"voice: {mode}  (fast: {fast} | slow: {slow})")
+            print("usage: /llm voice fast|slow|auto  |  /llm voice fast <model-id>  |  /llm voice slow <model-id>")
             return
         v = rest[0].lower()
-        if v not in ("fast", "slow", "auto"):
+        if v == "auto":
+            set_env_var("FREELLMAPI_VOICE", "auto")
+            print("voice mode: auto (gateway picks the model)")
+            return
+        if v not in ("fast", "slow"):
             print("invalid voice mode (use: fast | slow | auto)")
             return
+        if len(rest) > 1:
+            mid = rest[1]
+            if not re.match(r"^[A-Za-z0-9_.:/\-]{1,80}$", mid):
+                print("invalid model id")
+                return
+            set_env_var(f"FREELLMAPI_VOICE_{v.upper()}", mid)
         set_env_var("FREELLMAPI_VOICE", v)
-        print(f"voice mode set to '{v}' -- used by the NEXT /say or voice message (no restart needed).")
+        model = os.getenv(f"FREELLMAPI_VOICE_{v.upper()}") or "auto"
+        print(f"voice mode: {v} (model: {model}) -- used by the NEXT /say or voice message (no restart needed).")
     elif cmd == "on":
         if os.path.exists(UNIFIED_OFF) and not os.path.exists(UNIFIED_FILE):
             os.rename(UNIFIED_OFF, UNIFIED_FILE)

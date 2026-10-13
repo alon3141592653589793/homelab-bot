@@ -13,7 +13,7 @@ LLM_HELP = (
     "/llm log [N]                   - last N journal lines\n"
     "/llm unified <key>             - save the unified API key the bot uses\n"
     "/llm model [auto|auto:fast|auto:smart|<id>] - show/set routing model\n"
-    "/llm voice [fast|slow|auto]     - show/set voice speed (fast = quick, slow = quality)\n"
+    "/llm voice [fast|slow|auto] [<id>] - voice mode; fast/slow can store a model id\n"
     "/llm on | off                  - use the gateway / use Gemini only\n"
     "Provider keys are managed in the web dashboard (Keys page)."
 )
