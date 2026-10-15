@@ -181,6 +181,12 @@ HELP_SECTIONS = [
         ("(voice message)", "Send a voice recording; the Pi hears it and replies with voice"),
         ("/say <text>", "Pi speaks the text as an audio message"),
     ]),
+    ("AI Agent", [
+        ("/aiact on|off", "Let /aidebug execute controlled fixes (restart, profile, cooldown)"),
+        ("/autofix on|off", "Auto-restart allowlisted failed services"),
+        ("/aimemory", "Show the AI's saved notes (facts, issues, fixes)"),
+        ("/aimemory clear", "Wipe the AI memory"),
+    ]),
     ("Advanced", [
         ("/aidebug <question>", "Conversational AI diagnostic (via the /llm gateway)"),
         ("/sync", "Pull latest from the repo, reboot"),
@@ -315,6 +321,34 @@ async def handle_reactive_command(client, message):
         except FileNotFoundError:
             pass
         await message.channel.send("Automatic updates RESUMED. Next weekly maintenance (Sun 03:00) will run apt upgrade + reboot as normal.")
+
+    elif content == "/aiact on":
+        open("/home/alon/secure-pi-bot/.ai_actions_enabled", "w").close()
+        await message.channel.send("AI write actions ENABLED. /aidebug can now restart services, set profiles, toggle logging, run cooldown. Max 6 actions per session.")
+
+    elif content == "/aiact off":
+        try:
+            os.remove("/home/alon/secure-pi-bot/.ai_actions_enabled")
+        except FileNotFoundError:
+            pass
+        await message.channel.send("AI write actions disabled. /aidebug is diagnose-only.")
+
+    elif content == "/autofix on":
+        open("/home/alon/secure-pi-bot/.autoremediate", "w").close()
+        await message.channel.send("Auto-remediation ENABLED. Allowlisted failed services will be restarted once automatically.")
+
+    elif content == "/autofix off":
+        try:
+            os.remove("/home/alon/secure-pi-bot/.autoremediate")
+        except FileNotFoundError:
+            pass
+        await message.channel.send("Auto-remediation disabled. Failed services will trigger a diagnosis only, no auto-restart.")
+
+    elif content == "/aimemory":
+        await run_script(message, "ai_memory.py", "Reading AI memory...", args=["--show"], timeout=10)
+
+    elif content == "/aimemory clear":
+        await run_script(message, "ai_memory.py", "Clearing AI memory...", args=["--clear"], timeout=10)
 
     elif raw.lower().startswith("/gofile keep "):
         repo = _gofile_repo_from_ref(raw[len("/gofile keep "):])

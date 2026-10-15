@@ -158,6 +158,31 @@ async def passive_thermal_monitor():
         if new_failed:
             svc_list = "\n".join(f"  | {s}" for s in sorted(new_failed))
             await ch.send(f"**Service Alert** - {len(new_failed)} new failure(s):\n{svc_list}")
+            # Auto-remediation: restart allowlisted failed services once (gated
+            # by .autoremediate). One attempt per incident (new_failed only
+            # contains services that weren't already failed).
+            if os.path.exists("/home/alon/secure-pi-bot/.autoremediate"):
+                _RESTARTABLE = {"nginx.service", "AdGuardHome.service", "sshd.service",
+                               "cron.service", "rsyslog.service", "wg-easy.service"}
+                for svc in sorted(new_failed):
+                    if svc in _RESTARTABLE:
+                        try:
+                            r = await asyncio.create_subprocess_exec(
+                                "systemctl", "restart", svc,
+                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                            )
+                            await asyncio.wait_for(r.wait(), timeout=20)
+                            chk = subprocess.run(["systemctl", "is-active", svc],
+                                                capture_output=True, text=True, timeout=5)
+                            state = (chk.stdout or chk.stderr or "unknown").strip()
+                            await ch.send(f"**Auto-fix** {svc}: restarted -> {state}")
+                            try:
+                                import ai_memory
+                                ai_memory.add_note("fix", f"Auto-restarted {svc} after failure -> {state}")
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            await ch.send(f"**Auto-fix** {svc}: failed ({e})")
             # Auto-run AI diagnosis for newly failed services
             services_str = ", ".join(sorted(new_failed))
             auto_prompt = f"Automated alert: service(s) {services_str} just failed. Review system state and diagnose what went wrong. Suggest fixes."

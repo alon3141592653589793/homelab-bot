@@ -61,6 +61,8 @@ import testReplyPy from "pi-bot:scripts/test_reply.py";
 import netScanPy from "pi-bot:scripts/net_scan.py";
 import netScanAutoPy from "pi-bot:scripts/net_scan_auto.py";
 import sshLoggerPy from "pi-bot:scripts/ssh_logger.py";
+import aiActionsPy from "pi-bot:scripts/ai_actions.py";
+import aiMemoryPy from "pi-bot:scripts/ai_memory.py";
 
 import piMaintenanceSh from "pi-bot:root/pi-maintenance.sh";
 import piAuditSh from "pi-bot:root/pi-audit.sh";
@@ -250,6 +252,22 @@ const scripts = [
     code: sshLoggerPy,
   },
   {
+    id: "ai-actions",
+    filename: "ai_actions.py",
+    path: "~/secure-pi-bot/scripts/ai_actions.py",
+    description: "Controlled write-action executor for the AI agent. Validates each requested action (restart_service, set_profile, toggle_logging, cooldown) against an allowlist, executes it, logs to /dev/shm, and returns a result string. Gated by .ai_actions_enabled (/aiact on). Max 6 calls per /aidebug session.",
+    tags: ["ai", "agent", "actions", "allowlist", "audit"],
+    code: aiActionsPy,
+  },
+  {
+    id: "ai-memory",
+    filename: "ai_memory.py",
+    path: "~/secure-pi-bot/scripts/ai_memory.py",
+    description: "Compact, bounded persistent memory for the AI agent. Stores structured notes (fact/issue/fix/note) in /dev/shm (RAM). Max 50 notes, 300 chars each. The AI reads relevant notes at session start and can add new ones via the remember/recall tools.",
+    tags: ["ai", "agent", "memory", "ram"],
+    code: aiMemoryPy,
+  },
+  {
     id: "fan-report",
     filename: "fan_report.py",
     path: "~/secure-pi-bot/scripts/fan_report.py",
@@ -309,8 +327,8 @@ const scripts = [
     id: "ai-debug",
     filename: "ai_debug.py",
     path: "~/secure-pi-bot/scripts/ai_debug.py",
-    description: "Token-efficient, context-aware Pi diagnostic assistant. Uses ONLY the FreeLLMAPI gateway (llm_gateway.py) -- no direct-Gemini fallback; on failure it prints the gateway's error. MANUAL (/aidebug), AUDIT (--audit, weekly), AUTO-ERROR (thermal/failed-service triggers). Only AUTO --web (lynis diff, Google Search) still calls Gemini directly. Read-only whitelist only. Keys: ~/.secrets/freellmapi_key (required) + ~/.secrets/gemini_key (only for --web).",
-    tags: ["ai", "debug", "gemini", "freellmapi", "tool-calling", "minified", "audit"],
+    description: "Token-efficient, context-aware Pi diagnostic assistant + agent. Uses ONLY the FreeLLMAPI gateway (llm_gateway.py) -- no direct-Gemini fallback; on failure it prints the gateway's error. MANUAL (/aidebug), AUDIT (--audit, weekly), AUTO-ERROR (thermal/failed-service triggers). Only AUTO --web (lynis diff, Google Search) still calls Gemini directly. Tools: get_info + inspect_service (read-only diagnostics), remember + recall (compact memory in /dev/shm), and act (write actions: restart_service/set_profile/toggle_logging/cooldown, gated by /aiact on, manual mode only, max 6/session). Keys: ~/.secrets/freellmapi_key (required) + ~/.secrets/gemini_key (only for --web).",
+    tags: ["ai", "debug", "gemini", "freellmapi", "tool-calling", "minified", "audit", "agent", "memory", "actions"],
     code: aiDebugPy,
   },
   {

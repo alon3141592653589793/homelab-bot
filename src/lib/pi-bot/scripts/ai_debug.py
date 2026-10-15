@@ -7,6 +7,8 @@ import subprocess
 import requests
 import api_manager
 import llm_gateway
+import ai_actions
+import ai_memory
 from datetime import datetime
 
 try:
@@ -257,6 +259,8 @@ def params_view(raw):
         pass
     out.append("testall=" + ("IN_PROGRESS" if ex(f"{SHM}/.testall_running") else "idle"))
     out.append("thermal_alert=70C")
+    out.append("ai_actions=" + ("ON" if ex(f"{BOT}/.ai_actions_enabled") else "off"))
+    out.append("autoremediate=" + ("ON" if ex(f"{BOT}/.autoremediate") else "off"))
     return "; ".join(out)
 
 INFO = {
@@ -422,6 +426,36 @@ TOOL_DECL = [{"name": "get_info",
                                "lines": {"type": "integer", "description": "recent journal lines (only for action=logs)", "minimum": 1, "maximum": 200}
                              },
                              "required": ["service","action"]}}]
+
+# Write-action tool: only in manual /aidebug mode, only when opted in (/aiact on).
+# Auto-error mode is suggest-only by design.
+if ai_actions.enabled() and mode == "manual":
+    TOOL_DECL.append({"name": "act",
+        "description": "Execute a controlled system action to fix a problem. Only use when you have a clear diagnosis and the action directly addresses it. Each action is validated against an allowlist.",
+        "parameters": {"type": "object",
+                       "properties": {
+                           "action": {"type": "string", "enum": sorted(ai_actions.ACTIONS.keys()), "description": "The action to perform"},
+                           "args": {"type": "object", "description": "Action-specific arguments (e.g. {\"service\":\"nginx.service\"} or {\"profile\":\"restricted\"})"}
+                       },
+                       "required": ["action"]}})
+
+# Memory tools: available in all modes so the AI can save and recall learnings.
+TOOL_DECL.append({"name": "remember",
+    "description": "Save a compact note to long-term memory for future sessions. Use for confirmed system facts, recurring issues, and fixes that worked. Keep it to one sentence.",
+    "parameters": {"type": "object",
+                   "properties": {
+                       "category": {"type": "string", "enum": list(ai_memory.CATEGORIES), "description": "fact=confirmed system fact, issue=recurring problem, fix=what worked, note=general observation"},
+                       "text": {"type": "string", "description": "The note, max 300 chars"}
+                   },
+                   "required": ["category", "text"]}})
+TOOL_DECL.append({"name": "recall",
+    "description": "Retrieve memory notes, optionally filtered by category. Call at the start of a diagnosis to check for relevant history.",
+    "parameters": {"type": "object",
+                   "properties": {
+                       "category": {"type": "string", "enum": list(ai_memory.CATEGORIES), "description": "Optional category filter"},
+                       "limit": {"type": "integer", "description": "Max notes to return (default 10)", "minimum": 1, "maximum": 50}
+                   }}})
+
 TOOLS = [{"functionDeclarations": TOOL_DECL}]
 
 SYS_INSTRUCT = ("You are the Pi diagnostic assistant for a Raspberry Pi home lab. "
@@ -429,7 +463,12 @@ SYS_INSTRUCT = ("You are the Pi diagnostic assistant for a Raspberry Pi home lab
                 "error strings, service names). Call get_info(source) for a read-only "
                 "diagnostic only when the provided context lacks the detail you need. "
                 "Call inspect_service(service, action) only to deep-dive a specific failed "
-                "service the context already named. Never suggest destructive actions. "
+                "service the context already named. "
+                "Use recall() at the start to check memory for relevant history. "
+                "Use remember(category, text) to save confirmed facts, recurring issues, or fixes that worked. "
+                + ("The act(action, args) tool is available to EXECUTE controlled fixes (restart_service, set_profile, toggle_logging, cooldown). Only use act when you have a clear diagnosis and the action directly addresses it. "
+                   if ai_actions.enabled() and mode == "manual" else "You can suggest fixes but cannot execute them in this mode. ")
+                + "Never suggest destructive actions. "
                 "RED FLAGS lists only real problems; 'none' means healthy, and VITALS are "
                 "informational readings, not problems. If the user's message is a test or "
                 "has no real question, reply with a one-line health summary of the vitals "
@@ -514,6 +553,18 @@ def diag_loop(context, question, models, max_rounds=4, tools=True, system=SYS_IN
                 fr.append({"functionResponse": {"name": "inspect_service",
                           "response": {"service": svc, "action": act,
                                        "result": handle_inspect_service(svc, act, lns)}}})
+            elif p["functionCall"]["name"] == "act":
+                a = p["functionCall"].get("args", {})
+                result = ai_actions.execute(a.get("action", ""), a.get("args", {}))
+                fr.append({"functionResponse": {"name": "act", "response": {"result": result}}})
+            elif p["functionCall"]["name"] == "remember":
+                a = p["functionCall"].get("args", {})
+                result = ai_memory.add_note(a.get("category", "note"), a.get("text", ""))
+                fr.append({"functionResponse": {"name": "remember", "response": {"result": result}}})
+            elif p["functionCall"]["name"] == "recall":
+                a = p["functionCall"].get("args", {})
+                notes = ai_memory.get_notes(a.get("category"), a.get("limit", 10))
+                fr.append({"functionResponse": {"name": "recall", "response": {"notes": notes}}})
         contents.append({"role": "user", "parts": fr})
     return None, used
 
@@ -552,13 +603,16 @@ if mode == "manual":
                 f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "summary": summ, "n": len(conv["messages"])}) + "\n")
             print(f"Observation: previous conversation summarized -> log.\n")
         conv = {"messages": [], "last": 0}
+    ai_actions.reset_calls()
     conv_ctx = ""
     if conv["messages"]:
         conv_ctx = "Previous conversation:\n"
         for m in conv["messages"][-6:]:
             conv_ctx += f"{'U' if m['role']=='user' else 'A'}: {m['text'][:300]}\n"
         conv_ctx += "\n"
-    final_text, used_model = diag_loop(conv_ctx + build_context(audit=False), prompt, MODELS, max_tokens=600)
+    mem = ai_memory.summary()
+    mem_ctx = f"Memory notes: {mem}\n\n" if mem else ""
+    final_text, used_model = diag_loop(mem_ctx + conv_ctx + build_context(audit=False), prompt, MODELS, max_tokens=600)
     if final_text:
         conv["messages"].append({"role": "user", "text": prompt})
         conv["messages"].append({"role": "assistant", "text": final_text})
@@ -567,7 +621,9 @@ if mode == "manual":
 
 elif mode == "audit":
     context = build_context(audit=True)
-    main_review, used_model = diag_loop(context, "Weekly system audit. Summarize health, list concerns with exact values, recommend actions.", MODELS, max_tokens=1500)
+    mem = ai_memory.summary()
+    mem_ctx = f"Memory notes: {mem}\n" if mem else ""
+    main_review, used_model = diag_loop(mem_ctx + context, "Weekly system audit. Summarize health, list concerns with exact values, recommend actions.", MODELS, max_tokens=1500)
     lyn = fetch_source("lynis")
     sec_review, _ = diag_loop(f"Previous audit:\n{main_review or ''}\n\nLYNIS (heavy) output:\n{lyn}",
                              "Given the weekly audit and this Lynis output, review security posture for the week; note whether things improved or worsened, citing specific warnings.", MODELS, max_rounds=3, max_tokens=1000)
@@ -585,7 +641,9 @@ elif mode == "auto":
 
 elif mode == "auto-error":
     focused = build_context(audit=False)
-    final_text, used_model = diag_loop(focused, f"Automatic error diagnosis. Trigger: {prompt}. Identify root cause and likely fix, citing exact values. If the trigger names a specific failed service, call inspect_service(service, 'status' or 'logs') for its details before concluding.", MODELS)
+    mem = ai_memory.summary()
+    mem_ctx = f"Memory notes: {mem}\n" if mem else ""
+    final_text, used_model = diag_loop(mem_ctx + focused, f"Automatic error diagnosis. Trigger: {prompt}. Identify root cause and likely fix, citing exact values. If the trigger names a specific failed service, call inspect_service(service, 'status' or 'logs') for its details before concluding. Use remember() to save what you find for future sessions.", MODELS)
     post_discord(f"**Auto-Diagnosis** [{ts}] trigger: {prompt}\n{final_text}")
 
 if final_text:
