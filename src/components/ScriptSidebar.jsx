@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Code2, ChevronRight, Menu, X, Clock, ClipboardList } from "lucide-react";
+import { Code2, ChevronRight, Menu, X, Clock, ClipboardList, Gamepad2 } from "lucide-react";
 
 const POLLING_RATES = [
   { label: "profile_scheduler.py", rate: "every 1 min", note: "instant exit if no change needed" },
@@ -16,8 +16,13 @@ const POLLING_RATES = [
   { label: "pi-maintenance.sh", rate: "daily 03:00", note: "flush logs + OS upgrade + reboot" },
 ];
 
-export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen, onMobileClose, statusId }) {
+export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen, onMobileClose, statusId, guideId }) {
   const [pollingOpen, setPollingOpen] = useState(false);
+
+  const specialEntries = [
+    { id: statusId, label: "Project Status", icon: ClipboardList, activeColor: "text-[#d29922]", activeBg: "bg-[#d29922]/10", activeBorder: "border-[#d29922]" },
+    { id: guideId, label: "MC Guide", icon: Gamepad2, activeColor: "text-[#3fb950]", activeBg: "bg-[#3fb950]/10", activeBorder: "border-[#3fb950]" },
+  ].filter(e => e.id);
   return (
     <>
       {/* Mobile overlay */}
@@ -52,42 +57,49 @@ export default function ScriptSidebar({ scripts, activeId, onSelect, mobileOpen,
 
         {/* Script list */}
         <nav className="flex-1 overflow-y-auto py-2">
-          <button
-            onClick={() => {
-              onSelect(statusId);
-              onMobileClose();
-            }}
-            className={cn(
-              "w-full text-left px-4 py-3 flex items-center gap-3 transition-colors border-b border-[#21262d]",
-              "hover:bg-[#161b22] group",
-              activeId === statusId
-                ? "bg-[#d29922]/10 border-r-2 border-[#d29922]"
-                : "border-r-2 border-transparent"
-            )}
-          >
-            <ClipboardList
-              className={cn(
-                "w-4 h-4 shrink-0",
-                activeId === statusId ? "text-[#d29922]" : "text-[#8b949e] group-hover:text-[#e6edf3]"
-              )}
-            />
-            <span
-              className={cn(
-                "font-mono text-sm",
-                activeId === statusId ? "text-[#d29922]" : "text-[#e6edf3]"
-              )}
-            >
-              Project Status
-            </span>
-            <ChevronRight
-              className={cn(
-                "w-4 h-4 ml-auto transition-opacity",
-                activeId === statusId
-                  ? "opacity-100 text-[#d29922]"
-                  : "opacity-0 group-hover:opacity-50 text-[#8b949e]"
-              )}
-            />
-          </button>
+          {specialEntries.map((entry) => {
+            const Icon = entry.icon;
+            const active = activeId === entry.id;
+            return (
+              <button
+                key={entry.id}
+                onClick={() => {
+                  onSelect(entry.id);
+                  onMobileClose();
+                }}
+                className={cn(
+                  "w-full text-left px-4 py-3 flex items-center gap-3 transition-colors border-b border-[#21262d]",
+                  "hover:bg-[#161b22] group",
+                  active
+                    ? cn(entry.activeBg, "border-r-2", entry.activeBorder)
+                    : "border-r-2 border-transparent"
+                )}
+              >
+                <Icon
+                  className={cn(
+                    "w-4 h-4 shrink-0",
+                    active ? entry.activeColor : "text-[#8b949e] group-hover:text-[#e6edf3]"
+                  )}
+                />
+                <span
+                  className={cn(
+                    "font-mono text-sm",
+                    active ? entry.activeColor : "text-[#e6edf3]"
+                  )}
+                >
+                  {entry.label}
+                </span>
+                <ChevronRight
+                  className={cn(
+                    "w-4 h-4 ml-auto transition-opacity",
+                    active
+                      ? cn("opacity-100", entry.activeColor)
+                      : "opacity-0 group-hover:opacity-50 text-[#8b949e]"
+                  )}
+                />
+              </button>
+            );
+          })}
           {scripts.map((script) => (
             <button
               key={script.id}

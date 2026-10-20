@@ -3,15 +3,23 @@ import { Menu } from "lucide-react";
 import ScriptSidebar from "@/components/ScriptSidebar";
 import CodeViewer from "@/components/CodeViewer";
 import ProjectStatus from "@/components/ProjectStatus";
+import MinecraftGuide from "@/components/MinecraftGuide";
 import scripts from "@/lib/scriptsData";
 
 const STATUS_ID = "project-status";
+const GUIDE_ID = "mc-guide";
 
 export default function Lab() {
   const [activeId, setActiveId] = useState(STATUS_ID);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const activeScript = scripts.find((s) => s.id === activeId);
+
+  const renderMain = () => {
+    if (activeId === STATUS_ID) return <ProjectStatus />;
+    if (activeId === GUIDE_ID) return <MinecraftGuide />;
+    return <CodeViewer script={activeScript} />;
+  };
 
   return (
     <div className="h-screen flex bg-[#0d1117] overflow-hidden pt-12">
@@ -34,9 +42,10 @@ export default function Lab() {
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         statusId={STATUS_ID}
+        guideId={GUIDE_ID}
       />
 
-      {activeId === STATUS_ID ? <ProjectStatus /> : <CodeViewer script={activeScript} />}
+      {renderMain()}
     </div>
   );
 }

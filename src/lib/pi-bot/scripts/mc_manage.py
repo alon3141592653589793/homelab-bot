@@ -224,6 +224,7 @@ def main():
     p_tun.add_argument("java", nargs="?")
     p_tun.add_argument("bedrock", nargs="?")
     p_247 = sub.add_parser("24/7"); p_247.add_argument("mode", nargs="?")
+    p_crk = sub.add_parser("cracked"); p_crk.add_argument("mode", nargs="?")
     p_upd = sub.add_parser("update"); p_upd.add_argument("--version"); p_upd.add_argument("--heap")
     args = ap.parse_args()
 
@@ -540,6 +541,63 @@ def main():
         if args.mode in (None, "status"):
             print(f"  marker: {'set' if os.path.exists(MARKER_247) else 'not set'}  ({MARKER_247})")
             print(f"  watchdog script: {WATCHDOG}")
+    elif args.cmd == "cracked":
+        sp = os.path.join(MC_DIR, "server.properties")
+        if args.mode not in ("on", "off", None):
+            print("Usage: /mc cracked [on|off]")
+            return
+        if not os.path.exists(sp):
+            print("server.properties not found -- run /mc setup first")
+            return
+        if args.mode is None:
+            val = "true"
+            try:
+                for line in open(sp):
+                    if line.strip().startswith("online-mode="):
+                        val = line.strip().split("=", 1)[1]
+                        break
+            except OSError:
+                pass
+            print(f"online-mode={val}  ({'cracked clients ALLOWED' if val == 'false' else 'authenticated only'})")
+            print("Usage: /mc cracked on  (allow cracked/eaglercraft) | /mc cracked off (Microsoft auth)")
+            return
+        target = "false" if args.mode == "on" else "true"
+        lines = []
+        found = False
+        try:
+            with open(sp) as f:
+                for line in f:
+                    if line.strip().startswith("online-mode="):
+                        lines.append(f"online-mode={target}\n")
+                        found = True
+                    else:
+                        lines.append(line)
+        except OSError:
+            lines = []
+        if not found:
+            lines.append(f"online-mode={target}\n")
+        with open(sp, "w") as f:
+            f.writelines(lines)
+        if screen_alive():
+            print(f"online-mode={target} written. Restarting server to apply...")
+            send_console("stop")
+            for _ in range(30):
+                if not screen_alive():
+                    break
+                time.sleep(2)
+            if screen_alive():
+                run(["screen", "-S", SCREEN, "-X", "quit"])
+            run(["screen", "-dmS", SCREEN, LAUNCH])
+            time.sleep(6)
+            if screen_alive():
+                print(f"restarted -- cracked clients {'CAN' if target == 'false' else 'CANNOT'} join now")
+                auto_chunky()
+            else:
+                err = run(["bash", LAUNCH], timeout=25)
+                print(f"failed to restart. Direct run output:\n{err}")
+        else:
+            print(f"online-mode={target} written. Start the server to apply: /mc start")
+            print(f"  cracked clients {'CAN' if target == 'false' else 'CANNOT'} join once it's running")
     elif args.cmd == "update":
         cmd = ["python3", "-u", SETUP]
         if args.version:

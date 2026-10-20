@@ -50,6 +50,8 @@ async def handle_minecraft_command(client, message):
             "/mc 24/7 [on|off]- Auto-restart the server if it dies (skips maintenance + /testall)\n"
             "/mc setup       - First-time install OR update (latest Paper + Geyser + Floodgate), then /mc restart\n"
             "/mc update      - Same as /mc setup\n"
+            "/mc cracked on  - Allow cracked/non-authenticated clients (online-mode=false)\n"
+            "/mc cracked off - Require Microsoft auth again (online-mode=true)\n"
             "/mc tunnels     - Show the playit.gg tunnel addresses\n"
             "/mc tunnels set <java-addr:port> <bedrock-addr:port>  - Save them so /mc status shows them\n"
             "/mc help        - This message\n\n"
@@ -119,6 +121,10 @@ async def handle_minecraft_command(client, message):
         mode = content.split()[-1].lower() if len(content.split()) > 2 else None
         sub = ["24/7"] + ([mode] if mode in ("on", "off") else [])
         await _run(message, sub, "Minecraft 24/7", timeout=20)
+    elif c in ("/mc cracked", "/mc cracked on", "/mc cracked off"):
+        mode = content.split()[-1].lower() if len(content.split()) > 2 else None
+        sub = ["cracked"] + ([mode] if mode in ("on", "off") else [])
+        await _run(message, sub, "Minecraft Cracked Mode", timeout=60)
     elif c.startswith("/mc tunnels set "):
         rest = raw[len("/mc tunnels set "):].strip().split()
         if len(rest) >= 2:
