@@ -187,33 +187,71 @@ def ensure_eula_and_props():
 def write_paper_config():
     """Zero-tradeoff Paper chunk-loading tuning (paper-global.yml).
 
-    Forces general.player-max-concurrent-chunk-loads to 4.0 so the 4-core Pi
-    loads more chunks in parallel during player movement -- faster chunk
-    loading, no steady-state TPS cost. Leaves basic (0.0 = auto) and any
-    user value >= 4.0 untouched. Merge-safe. The armor-stands-tick tweak is
-    applied at /mc start (paper-world.yml only exists after the first boot).
+    Forces the general-section player-max-concurrent-chunk-loads to 4.0 so
+    the 4-core Pi loads more chunks in parallel during player movement --
+    faster chunk loading, no steady-state TPS cost. Leaves the basic section
+    (0.0 = auto) and any user value >= 4.0 untouched. Merge-safe.
+    The armor-stands-tick tweak is applied at /mc start (paper-world.yml is
+    generated on first boot).
     """
     cfg_dir = os.path.join(MC_DIR, "config")
     os.makedirs(cfg_dir, exist_ok=True)
     pg = os.path.join(cfg_dir, "paper-global.yml")
+    TARGET = 4.0
 
-    def _bump(m):
-        try:
-            v = float(m.group(1))
-            if 0.0 < v < 4.0:
-                return "player-max-concurrent-chunk-loads: 4.0"
-        except ValueError:
-            pass
-        return m.group(0)
+    def _patch_concurrency(txt):
+        """Walk paper-global.yml, locate chunk-loading -> general, and force the
+        player-max-concurrent* key to 4.0 if it's below 4. Returns
+        (changed, orig_value, new_text). orig_value is None if the general
+        section/key is absent."""
+        lines = txt.splitlines(keepends=True)
+        in_chunk_loading = False
+        chunk_indent = 0
+        section = None
+        changed = False
+        orig = None
+        for i, ln in enumerate(lines):
+            stripped = ln.rstrip("\n")
+            m = re.match(r"^(\s*)([\w-]+)\s*:\s*(.*)$", stripped)
+            if not m:
+                continue
+            indent = len(m.group(1))
+            name = m.group(2)
+            rest = m.group(3).strip()
+            is_section = (rest == "" or rest.startswith("#"))
+            if is_section:
+                if in_chunk_loading and indent <= chunk_indent and name != "chunk-loading":
+                    in_chunk_loading = False
+                    section = None
+                if name == "chunk-loading":
+                    in_chunk_loading = True
+                    chunk_indent = indent
+                    section = None
+                elif in_chunk_loading and indent == chunk_indent + 2 and name in ("basic", "general"):
+                    section = name
+                else:
+                    section = None
+                continue
+            if in_chunk_loading and section == "general" and name.startswith("player-max-concurrent"):
+                try:
+                    val = float(rest.split()[0].rstrip(","))
+                except (ValueError, IndexError):
+                    continue
+                if orig is None:
+                    orig = val
+                if val < TARGET:
+                    lines[i] = f"{' ' * indent}{name}: {TARGET:g}\n"
+                    changed = True
+        return changed, orig, "".join(lines)
 
     if os.path.exists(pg):
         txt = open(pg).read()
-        new = re.sub(r"player-max-concurrent-chunk-loads:\s*([0-9]*\.?[0-9]+)", _bump, txt)
-        if new != txt:
+        changed, orig, new = _patch_concurrency(txt)
+        if changed:
             open(pg, "w").write(new)
-            print("  paper-global.yml: chunk-load concurrency -> 4.0 (faster chunk loading)")
-        elif "player-max-concurrent-chunk-loads" in txt:
-            print("  paper-global.yml: chunk-load concurrency already >= 4.0 (kept)")
+            print(f"  paper-global.yml: chunk-load concurrency {orig:g} -> {TARGET:g} (parallel chunk loading)")
+        elif orig is not None:
+            print(f"  paper-global.yml: chunk-load concurrency = {orig:g} (already optimal)")
         else:
             open(pg, "a").write(
                 ("\n" if txt and not txt.endswith("\n") else "") +
@@ -223,7 +261,7 @@ def write_paper_config():
                 "    # 4-core Pi: more chunks load in parallel during player movement\n"
                 "    player-max-concurrent-chunk-loads: 4.0\n"
             )
-            print("  paper-global.yml: chunk-load concurrency set to 4.0 (faster chunk loading)")
+            print("  paper-global.yml: chunk-load concurrency set to 4.0 (parallel chunk loading)")
     else:
         open(pg, "w").write(
             "# HomeLab chunk-loading tuning (zero gameplay tradeoff)\n"
@@ -232,7 +270,7 @@ def write_paper_config():
             "    # 4-core Pi: more chunks load in parallel during player movement\n"
             "    player-max-concurrent-chunk-loads: 4.0\n"
         )
-        print("  paper-global.yml: chunk-load concurrency set to 4.0 (faster chunk loading)")
+        print("  paper-global.yml: chunk-load concurrency set to 4.0 (parallel chunk loading)")
 
 
 def _latest_modrinth_jar(slug, loaders=("paper", "spigot")):
