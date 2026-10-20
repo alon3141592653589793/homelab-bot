@@ -183,6 +183,59 @@ def ensure_eula_and_props():
             f.write(f"{k}={v}\n")
 
 
+def write_paper_config():
+    """Zero-tradeoff Paper performance config.
+
+    paper-global.yml: raise chunk-load concurrency (2.0 -> 4.0) so the 4-core
+      Pi loads more chunks in parallel during player movement -- faster chunk
+      loading with no steady-state TPS cost. Merge-safe.
+    paper-world.yml: armor-stands-tick=false -- armor stands stop ticking unless
+      they are markers (invisible TPS save on servers with many stands).
+    """
+    cfg_dir = os.path.join(MC_DIR, "config")
+    os.makedirs(cfg_dir, exist_ok=True)
+    pg = os.path.join(cfg_dir, "paper-global.yml")
+    if os.path.exists(pg):
+        txt = open(pg).read()
+        if "player-max-concurrent-chunk-loads: 2.0" in txt:
+            open(pg, "w").write(
+                txt.replace("player-max-concurrent-chunk-loads: 2.0",
+                            "player-max-concurrent-chunk-loads: 4.0", 1))
+            print("  paper-global.yml: chunk-load concurrency 2.0 -> 4.0 (faster chunk loading)")
+        else:
+            print("  paper-global.yml: chunk-load concurrency kept (already non-default)")
+    else:
+        open(pg, "w").write(
+            "# HomeLab chunk-loading tuning (zero gameplay tradeoff)\n"
+            "chunk-loading:\n"
+            "  basic:\n"
+            "    autoconfig-send-distance: true\n"
+            "  general:\n"
+            "    # 4-core Pi: more chunks load in parallel during player movement\n"
+            "    player-max-concurrent-chunk-loads: 4.0\n"
+        )
+        print("  paper-global.yml: chunk-load concurrency set to 4.0 (faster chunk loading)")
+
+    pw = os.path.join(MC_DIR, "paper-world.yml")
+    if os.path.exists(pw):
+        lines = open(pw).read().splitlines()
+        out, changed = [], False
+        for ln in lines:
+            s = ln.strip()
+            if s.startswith("armor-stands-tick:") and not s.endswith("false"):
+                out.append(ln[:len(ln) - len(ln.lstrip())] + "armor-stands-tick: false")
+                changed = True
+            else:
+                out.append(ln)
+        if changed:
+            open(pw, "w").write("\n".join(out) + "\n")
+            print("  paper-world.yml: armor-stands-tick=false (invisible TPS save)")
+        else:
+            print("  paper-world.yml: armor-stands-tick already false (or key absent)")
+    else:
+        print("  paper-world.yml: not generated yet (run server once, then /mc update)")
+
+
 def _latest_modrinth_jar(slug, loaders=("paper", "spigot")):
     url = f"https://api.modrinth.com/v2/project/{urllib.parse.quote(slug, safe='')}/version"
     req = urllib.request.Request(url, headers={"User-Agent": "pi-bot/mc-setup"})
@@ -303,10 +356,12 @@ def main():
 
     print("== config ==")
     ensure_eula_and_props()
+    write_paper_config()
     write_launch(args.heap)
     print("  optimizations: view-distance=4, simulation-distance=4, network-compression=256,")
     print("                 sync-chunk-writes=false (SD-card), native transport (epoll),")
-    print("                 G1GC tuned for Pi RAM (short pauses, larger young gen)")
+    print("                 G1GC tuned for Pi RAM (short pauses, larger young gen),")
+    print("                 chunk-load concurrency 4 (parallel loading), armor-stands-tick=false")
     print("  Chunky pre-generation is AUTO: /mc start configures it once (world=world, radius=2000)")
     print("  and resumes on every later restart -- no manual /mc cmd needed.")
 
