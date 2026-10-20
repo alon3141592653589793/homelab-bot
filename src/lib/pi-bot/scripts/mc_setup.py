@@ -16,6 +16,7 @@ Usage:
 Requires: java (openjdk-21 for MC 1.21), screen.
 """
 import os
+import re
 import sys
 import json
 import shutil
@@ -184,56 +185,54 @@ def ensure_eula_and_props():
 
 
 def write_paper_config():
-    """Zero-tradeoff Paper performance config.
+    """Zero-tradeoff Paper chunk-loading tuning (paper-global.yml).
 
-    paper-global.yml: raise chunk-load concurrency (2.0 -> 4.0) so the 4-core
-      Pi loads more chunks in parallel during player movement -- faster chunk
-      loading with no steady-state TPS cost. Merge-safe.
-    paper-world.yml: armor-stands-tick=false -- armor stands stop ticking unless
-      they are markers (invisible TPS save on servers with many stands).
+    Forces general.player-max-concurrent-chunk-loads to 4.0 so the 4-core Pi
+    loads more chunks in parallel during player movement -- faster chunk
+    loading, no steady-state TPS cost. Leaves basic (0.0 = auto) and any
+    user value >= 4.0 untouched. Merge-safe. The armor-stands-tick tweak is
+    applied at /mc start (paper-world.yml only exists after the first boot).
     """
     cfg_dir = os.path.join(MC_DIR, "config")
     os.makedirs(cfg_dir, exist_ok=True)
     pg = os.path.join(cfg_dir, "paper-global.yml")
+
+    def _bump(m):
+        try:
+            v = float(m.group(1))
+            if 0.0 < v < 4.0:
+                return "player-max-concurrent-chunk-loads: 4.0"
+        except ValueError:
+            pass
+        return m.group(0)
+
     if os.path.exists(pg):
         txt = open(pg).read()
-        if "player-max-concurrent-chunk-loads: 2.0" in txt:
-            open(pg, "w").write(
-                txt.replace("player-max-concurrent-chunk-loads: 2.0",
-                            "player-max-concurrent-chunk-loads: 4.0", 1))
-            print("  paper-global.yml: chunk-load concurrency 2.0 -> 4.0 (faster chunk loading)")
+        new = re.sub(r"player-max-concurrent-chunk-loads:\s*([0-9]*\.?[0-9]+)", _bump, txt)
+        if new != txt:
+            open(pg, "w").write(new)
+            print("  paper-global.yml: chunk-load concurrency -> 4.0 (faster chunk loading)")
+        elif "player-max-concurrent-chunk-loads" in txt:
+            print("  paper-global.yml: chunk-load concurrency already >= 4.0 (kept)")
         else:
-            print("  paper-global.yml: chunk-load concurrency kept (already non-default)")
+            open(pg, "a").write(
+                ("\n" if txt and not txt.endswith("\n") else "") +
+                "# HomeLab chunk-loading tuning (zero gameplay tradeoff)\n"
+                "chunk-loading:\n"
+                "  general:\n"
+                "    # 4-core Pi: more chunks load in parallel during player movement\n"
+                "    player-max-concurrent-chunk-loads: 4.0\n"
+            )
+            print("  paper-global.yml: chunk-load concurrency set to 4.0 (faster chunk loading)")
     else:
         open(pg, "w").write(
             "# HomeLab chunk-loading tuning (zero gameplay tradeoff)\n"
             "chunk-loading:\n"
-            "  basic:\n"
-            "    autoconfig-send-distance: true\n"
             "  general:\n"
             "    # 4-core Pi: more chunks load in parallel during player movement\n"
             "    player-max-concurrent-chunk-loads: 4.0\n"
         )
         print("  paper-global.yml: chunk-load concurrency set to 4.0 (faster chunk loading)")
-
-    pw = os.path.join(MC_DIR, "paper-world.yml")
-    if os.path.exists(pw):
-        lines = open(pw).read().splitlines()
-        out, changed = [], False
-        for ln in lines:
-            s = ln.strip()
-            if s.startswith("armor-stands-tick:") and not s.endswith("false"):
-                out.append(ln[:len(ln) - len(ln.lstrip())] + "armor-stands-tick: false")
-                changed = True
-            else:
-                out.append(ln)
-        if changed:
-            open(pw, "w").write("\n".join(out) + "\n")
-            print("  paper-world.yml: armor-stands-tick=false (invisible TPS save)")
-        else:
-            print("  paper-world.yml: armor-stands-tick already false (or key absent)")
-    else:
-        print("  paper-world.yml: not generated yet (run server once, then /mc update)")
 
 
 def _latest_modrinth_jar(slug, loaders=("paper", "spigot")):
@@ -361,7 +360,8 @@ def main():
     print("  optimizations: view-distance=4, simulation-distance=4, network-compression=256,")
     print("                 sync-chunk-writes=false (SD-card), native transport (epoll),")
     print("                 G1GC tuned for Pi RAM (short pauses, larger young gen),")
-    print("                 chunk-load concurrency 4 (parallel loading), armor-stands-tick=false")
+    print("                 chunk-load concurrency 4 (parallel loading)")
+    print("  armor-stands-tick=false is applied at /mc start (paper-world.yml is generated on first boot)")
     print("  Chunky pre-generation is AUTO: /mc start configures it once (world=world, radius=2000)")
     print("  and resumes on every later restart -- no manual /mc cmd needed.")
 

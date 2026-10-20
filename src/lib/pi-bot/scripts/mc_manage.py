@@ -155,6 +155,28 @@ def auto_chunky():
         f.write("configured\n")
 
 
+def ensure_armor_stand_tweak():
+    """Set armor-stands-tick=false in paper-world.yml (invisible TPS save:
+    armor stands stop ticking unless they are markers). Idempotent.
+    Returns True if it changed the file, False if already set, None if the
+    file does not exist yet (Paper generates it on first boot)."""
+    pw = os.path.join(MC_DIR, "paper-world.yml")
+    if not os.path.exists(pw):
+        return None
+    lines = open(pw).read().splitlines()
+    out, changed = [], False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("armor-stands-tick:") and not s.endswith("false"):
+            out.append(ln[:len(ln) - len(ln.lstrip())] + "armor-stands-tick: false")
+            changed = True
+        else:
+            out.append(ln)
+    if changed:
+        open(pw, "w").write("\n".join(out) + "\n")
+    return changed
+
+
 def _world_dirs():
     return [d for d in os.listdir(MC_DIR)
             if os.path.isdir(os.path.join(MC_DIR, d)) and d.startswith("world")]
@@ -232,12 +254,21 @@ def main():
         if screen_alive():
             print("already running (screen 'mc' alive)")
         else:
+            # Apply armor-stands-tick BEFORE start so it takes effect this boot
+            # (only if paper-world.yml already exists from a prior boot).
+            pre = ensure_armor_stand_tweak()
+            if pre is True:
+                print("paper-world.yml: armor-stands-tick=false (applies this boot)")
             run(["screen", "-dmS", SCREEN, LAUNCH])
             time.sleep(6)
             if screen_alive():
                 print("started (screen 'mc' alive) -- first boot generates the world (~30s)")
                 # auto-resume Chunky world pre-generation (configures once on first boot)
                 auto_chunky()
+                # first boot just generated paper-world.yml -> patch it for next boot
+                if pre is None:
+                    if ensure_armor_stand_tweak():
+                        print("paper-world.yml: armor-stands-tick=false (applies next restart)")
             else:
                 # screen exited immediately -- run start.sh directly to surface the java error
                 err = run(["bash", LAUNCH], timeout=25)
