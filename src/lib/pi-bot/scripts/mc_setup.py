@@ -187,10 +187,14 @@ def ensure_eula_and_props():
 def write_paper_config():
     """Zero-tradeoff Paper chunk-loading tuning (paper-global.yml).
 
-    Forces the general-section player-max-concurrent-chunk-loads to 4.0 so
-    the 4-core Pi loads more chunks in parallel during player movement --
-    faster chunk loading, no steady-state TPS cost. Leaves the basic section
-    (0.0 = auto) and any user value >= 4.0 untouched. Merge-safe.
+    Paper's real structure (per PaperMC docs) is a top-level
+    'chunk-loading-advanced' section with 'player-max-concurrent-chunk-loads'
+    (default 0 = auto). We force it to 4 so the 4-core Pi loads more chunks in
+    parallel during player movement -- faster chunk loading, no steady-state
+    TPS cost. Any user value >= 4 is left untouched.
+
+    Also strips a stray top-level 'chunk-loading:' block that an older /mc
+    setup mistakenly appended (Paper has no such section and ignores it).
     The armor-stands-tick tweak is applied at /mc start (paper-world.yml is
     generated on first boot).
     """
@@ -198,41 +202,52 @@ def write_paper_config():
     os.makedirs(cfg_dir, exist_ok=True)
     pg = os.path.join(cfg_dir, "paper-global.yml")
     TARGET = 4.0
+    KEY = "player-max-concurrent-chunk-loads"
+    SECTION = "chunk-loading-advanced"
 
-    def _patch_concurrency(txt):
-        """Walk paper-global.yml, locate chunk-loading -> general, and force the
-        player-max-concurrent* key to 4.0 if it's below 4. Returns
-        (changed, orig_value, new_text). orig_value is None if the general
-        section/key is absent."""
+    def _strip_bogus(txt):
+        """Remove a stale top-level 'chunk-loading:' block (only if it has a
+        'general:' line, the signature of an old bad append). Paper's real
+        chunk sections are chunk-loading-advanced / chunk-loading-basic /
+        chunk-system -- never 'chunk-loading'."""
         lines = txt.splitlines(keepends=True)
-        in_chunk_loading = False
-        chunk_indent = 0
+        out, i, n, removed = [], 0, len(lines), False
+        while i < n:
+            ln = lines[i]
+            if re.match(r"^chunk-loading\s*:\s*$", ln.rstrip("\n")):
+                block = [ln]
+                j = i + 1
+                while j < n and (lines[j].rstrip("\n") == "" or re.match(r"^[ \t]+", lines[j])):
+                    block.append(lines[j])
+                    j += 1
+                if any(re.match(r"^[ \t]*general\s*:", b) for b in block):
+                    removed = True
+                    i = j
+                    continue
+            out.append(ln)
+            i += 1
+        return removed, "".join(out)
+
+    def _patch(txt):
+        """Force chunk-loading-advanced.player-max-concurrent-chunk-loads to 4.
+        Returns (changed, orig_value, new_text); orig is None if absent."""
+        lines = txt.splitlines(keepends=True)
         section = None
         changed = False
         orig = None
         for i, ln in enumerate(lines):
             stripped = ln.rstrip("\n")
-            m = re.match(r"^(\s*)([\w-]+)\s*:\s*(.*)$", stripped)
+            m = re.match(r"^(\s*)([\w.-]+)\s*:\s*(.*)$", stripped)
             if not m:
                 continue
             indent = len(m.group(1))
             name = m.group(2)
             rest = m.group(3).strip()
-            is_section = (rest == "" or rest.startswith("#"))
-            if is_section:
-                if in_chunk_loading and indent <= chunk_indent and name != "chunk-loading":
-                    in_chunk_loading = False
-                    section = None
-                if name == "chunk-loading":
-                    in_chunk_loading = True
-                    chunk_indent = indent
-                    section = None
-                elif in_chunk_loading and indent == chunk_indent + 2 and name in ("basic", "general"):
+            if rest == "" or rest.startswith("#"):
+                if indent == 0:
                     section = name
-                else:
-                    section = None
                 continue
-            if in_chunk_loading and section == "general" and name.startswith("player-max-concurrent"):
+            if section == SECTION and name == KEY:
                 try:
                     val = float(rest.split()[0].rstrip(","))
                 except (ValueError, IndexError):
@@ -246,30 +261,29 @@ def write_paper_config():
 
     if os.path.exists(pg):
         txt = open(pg).read()
-        changed, orig, new = _patch_concurrency(txt)
+        bogus, txt = _strip_bogus(txt)
+        changed, orig, new = _patch(txt)
         if changed:
             open(pg, "w").write(new)
-            print(f"  paper-global.yml: chunk-load concurrency {orig:g} -> {TARGET:g} (parallel chunk loading)")
+            tag = "0 (auto)" if orig == 0 else f"{orig:g}"
+            print(f"  paper-global.yml: chunk-load concurrency {tag} -> {TARGET:g} (parallel chunk loading)")
         elif orig is not None:
             print(f"  paper-global.yml: chunk-load concurrency = {orig:g} (already optimal)")
         else:
-            open(pg, "a").write(
-                ("\n" if txt and not txt.endswith("\n") else "") +
+            if txt and not txt.endswith("\n"):
+                txt += "\n"
+            open(pg, "w").write(txt +
                 "# HomeLab chunk-loading tuning (zero gameplay tradeoff)\n"
-                "chunk-loading:\n"
-                "  general:\n"
-                "    # 4-core Pi: more chunks load in parallel during player movement\n"
-                "    player-max-concurrent-chunk-loads: 4.0\n"
-            )
+                f"{SECTION}:\n"
+                f"  {KEY}: {TARGET:g}\n")
             print("  paper-global.yml: chunk-load concurrency set to 4.0 (parallel chunk loading)")
+        if bogus:
+            print("  paper-global.yml: removed stale 'chunk-loading:' block (Paper uses chunk-loading-advanced)")
     else:
         open(pg, "w").write(
             "# HomeLab chunk-loading tuning (zero gameplay tradeoff)\n"
-            "chunk-loading:\n"
-            "  general:\n"
-            "    # 4-core Pi: more chunks load in parallel during player movement\n"
-            "    player-max-concurrent-chunk-loads: 4.0\n"
-        )
+            f"{SECTION}:\n"
+            f"  {KEY}: {TARGET:g}\n")
         print("  paper-global.yml: chunk-load concurrency set to 4.0 (parallel chunk loading)")
 
 
