@@ -64,6 +64,7 @@ import sshLoggerPy from "pi-bot:scripts/ssh_logger.py";
 import aiActionsPy from "pi-bot:scripts/ai_actions.py";
 import aiMemoryPy from "pi-bot:scripts/ai_memory.py";
 import playitWatchdogPy from "pi-bot:scripts/playit_watchdog.py";
+import mcDebugPy from "pi-bot:scripts/mc_debug.py";
 
 import piMaintenanceSh from "pi-bot:root/pi-maintenance.sh";
 import piAuditSh from "pi-bot:root/pi-audit.sh";
@@ -259,6 +260,14 @@ const scripts = [
     description: "Controlled write-action executor for the AI agent. Validates each requested action (restart_service, set_profile, toggle_logging, cooldown) against an allowlist, executes it, logs to /dev/shm, and returns a result string. Gated by .ai_actions_enabled (/aiact on). Max 6 calls per /aidebug session.",
     tags: ["ai", "agent", "actions", "allowlist", "audit"],
     code: aiActionsPy,
+  },
+  {
+    id: "mc-debug",
+    filename: "mc_debug.py",
+    path: "~/secure-pi-bot/scripts/mc_debug.py",
+    description: "AI-assisted Minecraft server diagnostic (/mc debug). Runs a read-only tool-calling loop through the FreeLLMAPI gateway over a curated allowlist of LOCAL commands (server config, logs, ports, playit state, system vitals). Records every command + output into a transcript, then the AI summarizes the likely cause. Safeguards: read-only (no stop/restart/write), local only (only DNS-resolves the saved tunnel host, never connects to the playit relay to avoid DoS / IP-block), capped at 6 rounds / 10 calls.",
+    tags: ["minecraft", "ai", "diagnostic", "freellmapi", "gateway", "tool-calling", "read-only"],
+    code: mcDebugPy,
   },
   {
     id: "playit-watchdog",

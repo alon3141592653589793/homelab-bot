@@ -33,6 +33,7 @@ async def handle_minecraft_command(client, message):
             "/mc stop        - Graceful stop (sends 'stop' to the console)\n"
             "/mc restart     - Restart the server\n"
             "/mc status      - Service state, screen session, paper jar, tunnels\n"
+            "/mc debug [q]   - AI-assisted read-only diagnostic (runs safe local commands + summarizes the likely issue)\n"
             "/mc ip          - Show the server IP / how to join (Java + Bedrock)\n"
             "/mc players     - Who's online right now\n"
             "/mc who         - Online players + the IP the server sees for each\n"
@@ -66,6 +67,21 @@ async def handle_minecraft_command(client, message):
         await _run(message, ["restart"], "Minecraft Restart", timeout=60)
     elif c == "/mc status":
         await _run(message, ["status"], "Minecraft Status")
+    elif c == "/mc debug" or c.startswith("/mc debug "):
+        # AI-assisted read-only diagnostic via the FreeLLMAPI gateway.
+        # Output is long (transcript + summary) so chunk it into multiple messages.
+        rest = raw[len("/mc debug"):].strip()
+        await message.channel.send("**/mc debug** running AI diagnostic (read-only, this can take ~20-40s)...")
+        sub = ["debug"] + (rest.split() if rest else [])
+        try:
+            r = subprocess.run(["python3", "-u", SCRIPT] + sub, capture_output=True, text=True, timeout=180)
+            out = ((r.stdout or "") + (r.stderr or "")).strip() or "(no output)"
+        except subprocess.TimeoutExpired:
+            out = "timed out after 180s"
+        except Exception as e:
+            out = f"error: {e}"
+        for i in range(0, len(out), 1900):
+            await message.channel.send(out[i:i + 1900])
     elif c == "/mc ip":
         await _run(message, ["ip"], "Minecraft IP / How to Join")
     elif c == "/mc ops":
