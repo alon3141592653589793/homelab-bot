@@ -143,6 +143,7 @@ DIAG = {
     "playit_service": lambda: _run(["systemctl", "is-active", "playit"]) + " / enabled: " + _run(["systemctl", "is-enabled", "playit"]),
     "playit_proc": lambda: _run(["sh", "-c", "pgrep -a playit || echo '(no playit process)'"]),
     "playit_log": lambda: _run(["journalctl", "-u", "playit", "-n", "40", "--no-pager"]),
+    "chunky": lambda: _run(["sh", "-c", "grep -iE 'chunky' " + LOG + " 2>/dev/null | tail -n 20 || echo '(no chunky lines)'"]),
     "resolve_tunnel": _resolve_tunnel,  # DNS only, no connection
     "probe_tunnel": _probe_tunnel,      # bounded 5s TCP test of the saved java endpoint
 }
@@ -171,27 +172,33 @@ TOOLS = [{"functionDeclarations": TOOL_DECL}]
 SYS_INSTRUCT = (
     "You are a Minecraft server diagnostician for a Raspberry Pi home lab running "
     "Paper + Geyser + Floodgate behind playit.gg tunnels. The server is reported "
-    "unreachable. Diagnose the likely cause using ONLY the run_diag(source) tool "
-    "(read-only, local). "
-    "Key checks: is the mc screen alive? is 25565/19132 listening? is the playit "
-    "service active? do logs show a crash? is Java correct? is RAM exhausted? "
-    "CRITICAL for connectivity: the player connects to the SAVED tunnel address, "
-    "NOT the local port. playit assigns each tunnel a RANDOM HIGH port on its relay. "
-    "If the saved java tunnel port is 25565 (the LOCAL server port) instead of a "
-    "random high port like the bedrock tunnel uses, the saved address is WRONG -- "
-    "tell the user to open the playit dashboard, copy the REAL public java tunnel "
-    "address (host + assigned port), and re-save it with "
+    "unreachable. Diagnose using ONLY the run_diag(source) tool (read-only, local). "
+    "Key checks: mc screen alive? 25565/19132 listening? playit service active? "
+    "logs show a crash? Java correct? RAM exhausted? "
+    "CONNECTIVITY: run probe_tunnel to TCP-test the saved java endpoint. "
+    "CONNECTED => the relay accepts connections AND forwards to the local server -- "
+    "the saved tunnel address is CORRECT; do NOT claim the port is wrong even if it "
+    "looks like the local port. REFUSED/TIMEOUT => the saved address is wrong or the "
+    "tunnel is dead; tell the user to open the playit dashboard, copy the REAL public "
+    "java tunnel address (host + assigned port), and re-save with "
     "/mc tunnels set <java-addr:port> <bedrock-addr:port>. "
-    "Run probe_tunnel to TCP-test the saved java endpoint: CONNECTED means the "
-    "relay forwards fine; REFUSED/TIMEOUT means the saved address is wrong or the "
-    "tunnel is dead. Also check playit_log for tunnel registration errors. "
-    "Be efficient: the initial snapshot gives the key signals; only call run_diag "
-    "for details it lacks. "
-    "Do NOT default to 'client network / school wifi' unless probe_tunnel CONNECTED "
-    "AND the player already tried multiple networks. After gathering evidence, "
-    "give: (1) LIKELY CAUSE in one line, (2) EVIDENCE citing exact values, "
-    "(3) SUGGESTED FIX (do NOT execute anything -- you cannot). Never suggest "
-    "destructive actions."
+    "If probe CONNECTED but the player STILL cannot join, the tunnel is NOT the "
+    "problem -- investigate in order: "
+    "(1) LOW RAM starving logins under load: check mem + load. If available RAM is "
+    "very low (say <500MB) AND load is high, the server thread is starved and the MC "
+    "login handshake times out even though the TCP socket opened. Suggest pausing "
+    "Chunky pre-gen (/mc cmd chunky pause) and/or raising heap only if free RAM allows. "
+    "(2) CHUNKY pre-generation hammering the Pi: check chunky -- if a task is running, "
+    "suggest pausing it while players connect (/mc cmd chunky pause). "
+    "(3) WRONG ADDRESS or EDITION on the player's side: Java players must use the java "
+    "tunnel address, Bedrock players the bedrock tunnel address -- a Java client cannot "
+    "join via the bedrock address and vice versa. Confirm the player used the exact "
+    "address from /mc ip. "
+    "(4) the player's network (only if 1-3 are ruled out). "
+    "Be efficient: the initial snapshot gives the key signals; only call run_diag for "
+    "details it lacks. After gathering evidence, give: (1) LIKELY CAUSE in one line, "
+    "(2) EVIDENCE citing exact values, (3) SUGGESTED FIX (do NOT execute -- you cannot). "
+    "Never suggest destructive actions."
 )
 
 
