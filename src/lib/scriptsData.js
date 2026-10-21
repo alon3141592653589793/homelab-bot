@@ -63,6 +63,7 @@ import netScanAutoPy from "pi-bot:scripts/net_scan_auto.py";
 import sshLoggerPy from "pi-bot:scripts/ssh_logger.py";
 import aiActionsPy from "pi-bot:scripts/ai_actions.py";
 import aiMemoryPy from "pi-bot:scripts/ai_memory.py";
+import playitWatchdogPy from "pi-bot:scripts/playit_watchdog.py";
 
 import piMaintenanceSh from "pi-bot:root/pi-maintenance.sh";
 import piAuditSh from "pi-bot:root/pi-audit.sh";
@@ -258,6 +259,14 @@ const scripts = [
     description: "Controlled write-action executor for the AI agent. Validates each requested action (restart_service, set_profile, toggle_logging, cooldown) against an allowlist, executes it, logs to /dev/shm, and returns a result string. Gated by .ai_actions_enabled (/aiact on). Max 6 calls per /aidebug session.",
     tags: ["ai", "agent", "actions", "allowlist", "audit"],
     code: aiActionsPy,
+  },
+  {
+    id: "playit-watchdog",
+    filename: "playit_watchdog.py",
+    path: "~/secure-pi-bot/scripts/playit_watchdog.py",
+    description: "Self-healing watchdog (every 2 min, offset from mc_watchdog). ALWAYS keeps the Minecraft server up when installed (unlike mc_watchdog which needs /mc 24/7 on) and restarts the playit.gg agent if its systemd service died. Needs the one-time sudoers entry in setup-notes for playit start; the check itself needs no sudo.",
+    tags: ["minecraft", "playit", "watchdog", "cron", "self-heal"],
+    code: playitWatchdogPy,
   },
   {
     id: "ai-memory",

@@ -12,6 +12,12 @@
 # the nightly reboot or the test suite.
 */2 * * * * python3 /home/alon/secure-pi-bot/scripts/mc_watchdog.py
 
+# Playit + server self-healing watchdog (every 2 min, offset 1 min from
+# mc_watchdog so they never race). ALWAYS keeps the server up when installed
+# (unlike mc_watchdog which needs /mc 24/7 on) and restarts the playit.gg
+# agent if its service died (needs the one-time sudoers entry in setup-notes).
+1-59/2 * * * * python3 /home/alon/secure-pi-bot/scripts/playit_watchdog.py
+
 # CPU profile auto-switcher (instant exit if no change needed)
 * * * * * python3 /home/alon/secure-pi-bot/scripts/profile_scheduler.py
 

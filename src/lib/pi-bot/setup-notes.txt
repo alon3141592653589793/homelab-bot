@@ -151,6 +151,18 @@ chmod 600 /home/alon/.secrets/gofile_token
 # Test: python3 ~/secure-pi-bot/scripts/gofile_mirror.py
 
 # ============================================================
+# PLAYIT.GG -- sudoers so the watchdog can restart the agent
+# ============================================================
+# The playit_watchdog.py cron checks `systemctl is-active playit` and starts
+# the service if it died. To let it start without a password (one-time, over
+# SSH at home):
+echo "alon ALL=(root) NOPASSWD: /bin/systemctl start playit" | sudo tee /etc/sudoers.d/pi-playit
+sudo visudo -c
+# Without this the watchdog still DETECTS a dead agent and logs it, but can't
+# start it (the apt-installed service normally auto-starts on boot anyway, so
+# this is just insurance for crashes).
+
+# ============================================================
 # CRONTAB -- /sync applies this automatically (deploy_manifest.txt @crontab)
 # After the first /sync, crontab is managed by the repo. To apply by hand:
 #   crontab ~/secure-pi-bot/src/lib/pi-bot/crontab.txt
