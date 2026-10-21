@@ -189,7 +189,7 @@ HELP_SECTIONS = [
     ]),
     ("Advanced", [
         ("/aidebug <question>", "Conversational AI diagnostic (via the /llm gateway)"),
-        ("/sync", "Pull latest from the repo, reboot"),
+        ("/sync", "Pull latest from the repo, update Minecraft, reboot"),
         ("/sync no-reboot", "Same, but skip the reboot"),
         ("/sync dry-run", "Fetch + list what would change (no write, no reboot)"),
         ("/gofile [min] [tor] <model|URL>", "Mirror a HF model OR any direct URL to Gofile (streamed, RAM-only). [min] = progress interval; [tor] = download via Tor. e.g. /gofile 10 ollama run hf.co/OWNER/REPO:Q4_K_M | /gofile tor https://x/f.bin"),
@@ -450,13 +450,13 @@ async def handle_reactive_command(client, message):
         await run_script(message, "params.py", "Listing current parameters...", timeout=15)
 
     elif content == "/sync":
-        await confirm_power_action(client, message, "Sync", "pi_deploy.py", "This pulls the latest code from the repo and reboots the Pi.", script_timeout=300)
+        await confirm_power_action(client, message, "Sync", "pi_deploy.py", "This pulls the latest code from the repo, updates Minecraft, and reboots the Pi.", script_timeout=900)
 
     elif content in ("/sync no-reboot", "/sync config", "/sync dry-run"):
         if content == "/sync dry-run":
             await run_script(message, "pi_deploy.py", "Dry-run: fetching + listing what would change (no write, no reboot)...", args=["--dry-run"], timeout=120)
         else:
-            await run_script(message, "pi_deploy.py", "Pulling latest from the repo (no reboot)...", args=["--no-reboot"], timeout=300)
+            await run_script(message, "pi_deploy.py", "Pulling latest from the repo + updating Minecraft (no reboot)...", args=["--no-reboot"], timeout=900)
 
     elif content in ("/syncinfo", "/deployinfo"):
         await run_script(message, "deploy_info.py", "Checking deploy status...", timeout=30)

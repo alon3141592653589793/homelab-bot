@@ -296,6 +296,22 @@ def main():
                 except OSError:
                     pass
 
+    # Auto-update the Minecraft server as part of /sync so the user never has
+    # to run /mc update separately. Re-downloads the latest Paper + Geyser +
+    # Floodgate; the reboot (or next boot) starts the new jar. Skipped on
+    # dry-run (returns earlier) and on root-install failure (returns earlier).
+    mc_setup = os.path.join(REPO_DIR, "scripts", "mc_setup.py")
+    if os.path.isfile(mc_setup):
+        print("Updating Minecraft server (Paper + Geyser + Floodgate)...")
+        r = subprocess.run(["python3", "-u", mc_setup], capture_output=True, text=True, timeout=600)
+        print((r.stdout or "").strip())
+        if r.returncode != 0:
+            print("MC update FAILED (exit " + str(r.returncode) + "): " + (r.stderr or "").strip())
+        else:
+            print("MC update done.")
+    else:
+        print("mc_setup.py not found -- skipping MC update.")
+
     if no_reboot:
         print("Skipping reboot (--no-reboot). Restart the bot by hand to load the new code.")
     else:
