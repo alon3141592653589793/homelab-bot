@@ -61,11 +61,11 @@ async def handle_minecraft_command(client, message):
             "Tunnels come from playit.gg -- no router port-forwarding."
         )
     elif c == "/mc start":
-        await _run(message, ["start"], "Minecraft Start")
+        await _run(message, ["start"], "Minecraft Start", timeout=120)
     elif c == "/mc stop":
         await _run(message, ["stop"], "Minecraft Stop", timeout=90)
     elif c == "/mc restart":
-        await _run(message, ["restart"], "Minecraft Restart", timeout=60)
+        await _run(message, ["restart"], "Minecraft Restart", timeout=150)
     elif c == "/mc status":
         await _run(message, ["status"], "Minecraft Status")
     elif c == "/mc debug" or c.startswith("/mc debug "):

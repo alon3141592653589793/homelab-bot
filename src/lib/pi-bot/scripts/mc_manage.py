@@ -155,6 +155,15 @@ def auto_chunky():
         f.write("configured\n")
 
 
+def spawn_auto_chunky():
+    """Resume Chunky pre-gen in the BACKGROUND so /mc start + /mc restart
+    return fast instead of blocking up to 60s on _chunky_loaded()."""
+    me = os.path.abspath(__file__)
+    subprocess.Popen(["python3", me, "autochunky"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+
+
 def ensure_armor_stand_tweak():
     """Set armor-stands-tick=false in paper-world.yml (invisible TPS save:
     armor stands stop ticking unless they are markers). Idempotent.
@@ -248,6 +257,7 @@ def main():
     p_247 = sub.add_parser("24/7"); p_247.add_argument("mode", nargs="?")
     p_crk = sub.add_parser("cracked"); p_crk.add_argument("mode", nargs="?")
     p_upd = sub.add_parser("update"); p_upd.add_argument("--version"); p_upd.add_argument("--heap")
+    sub.add_parser("autochunky")  # internal: background Chunky resume
     args = ap.parse_args()
 
     if args.cmd == "start":
@@ -263,8 +273,9 @@ def main():
             time.sleep(6)
             if screen_alive():
                 print("started (screen 'mc' alive) -- first boot generates the world (~30s)")
-                # auto-resume Chunky world pre-generation (configures once on first boot)
-                auto_chunky()
+                # auto-resume Chunky world pre-generation (configures once on first boot).
+                # Detached so /mc start returns fast (doesn't block on _chunky_loaded).
+                spawn_auto_chunky()
                 # first boot just generated paper-world.yml -> patch it for next boot
                 if pre is None:
                     if ensure_armor_stand_tweak():
@@ -296,7 +307,7 @@ def main():
         print(run(["screen", "-dmS", SCREEN, LAUNCH]) or "restarted")
         time.sleep(6)
         if screen_alive():
-            auto_chunky()
+            spawn_auto_chunky()
     elif args.cmd == "status":
         alive = screen_alive()
         print(f"server: {'running' if alive else 'stopped'}")
@@ -637,6 +648,8 @@ def main():
             cmd += ["--heap", args.heap]
         subprocess.run(cmd, text=True, timeout=600)
         print("update done -- /mc restart to load the new paper jar")
+    elif args.cmd == "autochunky":
+        auto_chunky()
     else:
         ap.print_help()
 
