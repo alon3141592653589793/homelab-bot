@@ -2,6 +2,7 @@ import os
 import subprocess
 
 SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "mc_manage.py")
+DEBUG_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "mc_debug.py")
 
 
 async def _run(message, subcmd, label, timeout=60):
@@ -72,9 +73,9 @@ async def handle_minecraft_command(client, message):
         # Output is long (transcript + summary) so chunk it into multiple messages.
         rest = raw[len("/mc debug"):].strip()
         await message.channel.send("**/mc debug** running AI diagnostic (read-only, this can take ~20-40s)...")
-        sub = ["debug"] + (rest.split() if rest else [])
+        sub = rest.split() if rest else []
         try:
-            r = subprocess.run(["python3", "-u", SCRIPT] + sub, capture_output=True, text=True, timeout=180)
+            r = subprocess.run(["python3", "-u", DEBUG_SCRIPT] + sub, capture_output=True, text=True, timeout=180)
             out = ((r.stdout or "") + (r.stderr or "")).strip() or "(no output)"
         except subprocess.TimeoutExpired:
             out = "timed out after 180s"
