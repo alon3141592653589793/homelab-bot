@@ -16,6 +16,7 @@ Usage:
   python3 mc_debug.py [optional question]
 """
 import os
+import re
 import sys
 import json
 import time
@@ -202,6 +203,31 @@ SYS_INSTRUCT = (
 )
 
 
+_INVOKE_RE = re.compile(r"<invoke\b[^>]*>.*?</invoke>", re.DOTALL | re.IGNORECASE)
+_INVOKE_NAME_RE = re.compile(r'name\s*=?\s*["\']?([A-Za-z0-9_.\-]+)', re.IGNORECASE)
+_PARAM_RE = re.compile(
+    r'<parameter\b[^>]*?name\s*=?\s*["\']?([A-Za-z0-9_.\-]+)["\']?[^>]*>(.*?)</parameter>',
+    re.DOTALL | re.IGNORECASE)
+
+
+def _parse_text_invokes(text):
+    """Some free models (e.g. dots-3-note-preview) emit tool calls as raw text
+    like <invoke name="run_diag"><parameter name="source">chunky</parameter>
+    </invoke> instead of in the OpenAI tool_calls field. Parse those into Gemini
+    functionCall parts so the diag loop keeps gathering evidence instead of
+    dumping the raw XML as a fake 'diagnosis'."""
+    parts = []
+    for block in _INVOKE_RE.findall(text or ""):
+        nm = _INVOKE_NAME_RE.search(block)
+        if not nm:
+            continue
+        args = {}
+        for pm in _PARAM_RE.finditer(block):
+            args[pm.group(1)] = pm.group(2).strip()
+        parts.append({"functionCall": {"name": nm.group(1), "args": args}})
+    return parts
+
+
 def diag_loop(question):
     global GATEWAY_ERROR
     transcript = []  # [(source, output)]
@@ -216,8 +242,16 @@ def diag_loop(question):
         parts = resp.get("candidates", [{}])[0].get("content", {}).get("parts", [])
         fn = [p for p in parts if "functionCall" in p]
         if not fn:
-            text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
-            return text, transcript, used
+            # Some free models emit tool calls as raw <invoke> text instead of
+            # in the OpenAI tool_calls field. Parse them so the loop keeps
+            # gathering evidence instead of dumping raw XML as a "diagnosis".
+            text = "".join(p.get("text", "") for p in parts if "text" in p)
+            parsed = _parse_text_invokes(text)
+            if parsed:
+                parts = parsed
+                fn = parsed
+            else:
+                return text.strip(), transcript, used
         contents.append({"role": "model", "parts": parts})
         fr = []
         for p in fn:
