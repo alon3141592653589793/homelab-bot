@@ -8,8 +8,8 @@ recorded into a transcript. At the end the AI summarizes the likely issue.
 
 SAFEGUARDS (by design):
   * Read-only: every command is from a static allowlist. No stop/restart/write.
-  * Local only: no external network probes except ONE DNS resolve of the saved
-    tunnel hostname (no connection to the playit relay -- avoids DoS / IP-block).
+  * Local only: no external probes except ONE DNS resolve and ONE bounded 5s TCP
+    connect to the saved java tunnel endpoint (tests the relay actually forwards).
   * Bounded: max 6 rounds, max 10 tool calls, each output truncated.
 
 Usage:
@@ -83,6 +83,36 @@ def _resolve_tunnel():
         return f"{host} -> (DNS failed: {e})"
 
 
+def _probe_tunnel():
+    """Bounded TCP probe of the saved java tunnel endpoint (ONE connect, 5s).
+    A successful TCP handshake means the playit relay accepts the connection and
+    forwards to the local server; refused/timeout means the saved address is wrong
+    or the tunnel is dead. This is the key connectivity test."""
+    try:
+        with open(TUNNELS_FILE) as f:
+            t = json.load(f)
+    except Exception:
+        return "(no tunnels saved -- run /mc tunnels set <java> <bedrock>)"
+    java = (t.get("java") or "").strip()
+    if not java or ":" not in java:
+        return "(no java tunnel saved)"
+    host, _, port = java.rpartition(":")
+    try:
+        port = int(port)
+    except ValueError:
+        return f"(bad java tunnel port: {java})"
+    t0 = time.time()
+    try:
+        with socket.create_connection((host, port), timeout=5):
+            return f"TCP {host}:{port} -> CONNECTED in {time.time()-t0:.1f}s (relay forwards OK)"
+    except ConnectionRefusedError:
+        return f"TCP {host}:{port} -> REFUSED (saved address wrong or tunnel down -- check the playit dashboard for the real public port)"
+    except socket.timeout:
+        return f"TCP {host}:{port} -> TIMEOUT after 5s (tunnel dead or address wrong)"
+    except Exception as e:
+        return f"TCP {host}:{port} -> err: {e}"
+
+
 # Read-only local diagnostic sources. Key = tool arg value.
 DIAG = {
     "screen": lambda: "mc screen alive: " + ("yes" if mc_manage.screen_alive() else "no"),
@@ -112,7 +142,9 @@ DIAG = {
     "procs": lambda: _run(["sh", "-c", "ps aux | grep -E '[j]ava|[p]layit' | awk '{print $1,$2,$3,$4,$11,$12,$13}' | head -n 10 || echo '(none)'"]),
     "playit_service": lambda: _run(["systemctl", "is-active", "playit"]) + " / enabled: " + _run(["systemctl", "is-enabled", "playit"]),
     "playit_proc": lambda: _run(["sh", "-c", "pgrep -a playit || echo '(no playit process)'"]),
+    "playit_log": lambda: _run(["journalctl", "-u", "playit", "-n", "40", "--no-pager"]),
     "resolve_tunnel": _resolve_tunnel,  # DNS only, no connection
+    "probe_tunnel": _probe_tunnel,      # bounded 5s TCP test of the saved java endpoint
 }
 
 
@@ -140,15 +172,25 @@ SYS_INSTRUCT = (
     "You are a Minecraft server diagnostician for a Raspberry Pi home lab running "
     "Paper + Geyser + Floodgate behind playit.gg tunnels. The server is reported "
     "unreachable. Diagnose the likely cause using ONLY the run_diag(source) tool "
-    "(read-only, local). Check: is the mc screen alive? is 25565/19132 listening? "
-    "is the playit service active? do logs show a crash? is Java correct? is RAM "
-    "exhausted? are the tunnels saved + resolvable? Be efficient: the initial "
-    "snapshot already gives you the key signals -- only call run_diag for details "
-    "the snapshot lacks. After gathering evidence, give: (1) LIKELY CAUSE in one "
-    "line, (2) EVIDENCE citing exact values, (3) SUGGESTED FIX (do NOT execute "
-    "anything -- you cannot). If the server is listening and playit is active but "
-    "the player still can't connect, say the issue is likely the CLIENT network "
-    "(school/work wifi blocking the playit relay), not the Pi. Never suggest "
+    "(read-only, local). "
+    "Key checks: is the mc screen alive? is 25565/19132 listening? is the playit "
+    "service active? do logs show a crash? is Java correct? is RAM exhausted? "
+    "CRITICAL for connectivity: the player connects to the SAVED tunnel address, "
+    "NOT the local port. playit assigns each tunnel a RANDOM HIGH port on its relay. "
+    "If the saved java tunnel port is 25565 (the LOCAL server port) instead of a "
+    "random high port like the bedrock tunnel uses, the saved address is WRONG -- "
+    "tell the user to open the playit dashboard, copy the REAL public java tunnel "
+    "address (host + assigned port), and re-save it with "
+    "/mc tunnels set <java-addr:port> <bedrock-addr:port>. "
+    "Run probe_tunnel to TCP-test the saved java endpoint: CONNECTED means the "
+    "relay forwards fine; REFUSED/TIMEOUT means the saved address is wrong or the "
+    "tunnel is dead. Also check playit_log for tunnel registration errors. "
+    "Be efficient: the initial snapshot gives the key signals; only call run_diag "
+    "for details it lacks. "
+    "Do NOT default to 'client network / school wifi' unless probe_tunnel CONNECTED "
+    "AND the player already tried multiple networks. After gathering evidence, "
+    "give: (1) LIKELY CAUSE in one line, (2) EVIDENCE citing exact values, "
+    "(3) SUGGESTED FIX (do NOT execute anything -- you cannot). Never suggest "
     "destructive actions."
 )
 
