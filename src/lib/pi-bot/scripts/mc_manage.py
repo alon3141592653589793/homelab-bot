@@ -258,11 +258,14 @@ def main():
     p_crk = sub.add_parser("cracked"); p_crk.add_argument("mode", nargs="?")
     p_upd = sub.add_parser("update"); p_upd.add_argument("--version"); p_upd.add_argument("--heap")
     sub.add_parser("autochunky")  # internal: background Chunky resume
+    sub.add_parser("check")
     args = ap.parse_args()
 
     if args.cmd == "start":
         if screen_alive():
             print("already running (screen 'mc' alive)")
+            import mc_connectivity
+            print(mc_connectivity.report(wait_done=False))
         else:
             # Apply armor-stands-tick BEFORE start so it takes effect this boot
             # (only if paper-world.yml already exists from a prior boot).
@@ -280,6 +283,10 @@ def main():
                 if pre is None:
                     if ensure_armor_stand_tweak():
                         print("paper-world.yml: armor-stands-tick=false (applies next restart)")
+                # Wait for true readiness + self-diagnose so the user never has to
+                # run manual commands to know if players can actually join.
+                import mc_connectivity
+                print(mc_connectivity.report(wait_done=True, done_timeout=100))
             else:
                 # screen exited immediately -- run start.sh directly to surface the java error
                 err = run(["bash", LAUNCH], timeout=25)
@@ -308,6 +315,8 @@ def main():
         time.sleep(6)
         if screen_alive():
             spawn_auto_chunky()
+            import mc_connectivity
+            print(mc_connectivity.report(wait_done=True, done_timeout=120))
     elif args.cmd == "status":
         alive = screen_alive()
         print(f"server: {'running' if alive else 'stopped'}")
@@ -636,6 +645,9 @@ def main():
         print("update done -- /mc restart to load the new paper jar")
     elif args.cmd == "autochunky":
         auto_chunky()
+    elif args.cmd == "check":
+        import mc_connectivity
+        print(mc_connectivity.report(wait_done=False))
     else:
         ap.print_help()
 

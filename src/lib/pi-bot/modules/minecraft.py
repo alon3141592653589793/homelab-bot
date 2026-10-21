@@ -34,6 +34,7 @@ async def handle_minecraft_command(client, message):
             "/mc stop        - Graceful stop (sends 'stop' to the console)\n"
             "/mc restart     - Restart the server\n"
             "/mc status      - Service state, screen session, paper jar, tunnels\n"
+            "/mc check       - Self-check every connection layer (whitelist, ports, tunnels, LAN) -- no manual commands needed\n"
             "/mc debug [q]   - AI-assisted read-only diagnostic (runs safe local commands + summarizes the likely issue)\n"
             "/mc ip          - Show the server IP / how to join (Java + Bedrock)\n"
             "/mc players     - Who's online right now\n"
@@ -68,6 +69,8 @@ async def handle_minecraft_command(client, message):
         await _run(message, ["restart"], "Minecraft Restart", timeout=150)
     elif c == "/mc status":
         await _run(message, ["status"], "Minecraft Status")
+    elif c == "/mc check":
+        await _run(message, ["check"], "Minecraft Connectivity Check", timeout=120)
     elif c == "/mc debug" or c.startswith("/mc debug "):
         # AI-assisted read-only diagnostic via the FreeLLMAPI gateway.
         # Output is long (transcript + summary) so chunk it into multiple messages.
