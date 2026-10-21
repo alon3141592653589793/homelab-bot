@@ -349,20 +349,6 @@ def main():
             print("  1) Install playit.gg (see /mc setup output)")
             print("  2) Add a Java (TCP 25565) + Bedrock (UDP 19132) tunnel in the playit dashboard")
             print("  3) /mc tunnels set <java-addr:port> <bedrock-addr:port>")
-        wan = "?"
-        try:
-            req = urllib.request.Request("https://api.ipify.org", headers={"User-Agent": "pi-bot/mc"})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                wan = r.read().decode().strip()
-        except Exception:
-            pass
-        if wan and wan != "?" and wan != lan:
-            print()
-            print("REMOTE VIA PORT-FORWARD (router, no tunnels):")
-            print(f"  public IP: {wan}  -> forward TCP 25565 (+ UDP 19132 for Bedrock) on the router to {lan}")
-            print(f"  Java players:    {wan}:25565   (after port-forwarding)")
-            print(f"  Bedrock players: {wan} , port 19132")
-            print("  Note: a home public IP can change on reboot -- playit.gg tunnels are more reliable.")
     elif args.cmd == "op":
         name = args.name
         lvl = max(1, min(4, args.level))
